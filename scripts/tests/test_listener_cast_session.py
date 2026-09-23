@@ -97,7 +97,8 @@ class ListenerCastIntegrationTests(unittest.TestCase):
             casts = [MagicMock(), MagicMock()]
             outputs, queues, turns = [], [], []
 
-            def queue_factory(speech_root, cast):
+            def queue_factory(speech_root, cast, voice="Yuna"):
+                self.assertEqual(voice, "Yuna")
                 speech_root = Path(speech_root)
                 self.assertNotEqual(speech_root, root)
                 self.assertNotIn(root, speech_root.parents)

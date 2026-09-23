@@ -35,6 +35,23 @@ ABSTAIN = "확인할 근거가 없어 정확히 답하기 어려워요."
 NASA_SKY = "https://spaceplace.nasa.gov/blue-sky/en/"
 
 
+def resolve_say_voice(requested=None, existing=None):
+    """Preserve an existing choice; explicitly requested names must be installed."""
+    selected = requested if requested is not None else (existing if existing is not None else "Yuna")
+    if not isinstance(selected, str) or not selected.strip():
+        raise ValueError("voice_cannot_be_blank")
+    if requested is not None:
+        result = subprocess.run(["/usr/bin/say", "-v", "?"], capture_output=True,
+                                text=True, check=True, timeout=10)
+        # A voice name can include spaces, parentheses, Unicode, and locale names.
+        # The locale column followed by '#' identifies its end unambiguously.
+        names = {match.group(1).rstrip() for line in result.stdout.splitlines()
+                 if (match := re.match(r"^(.+?)\s+[a-z]{2,3}[_-][A-Za-z0-9_-]+\s+#", line))}
+        if selected not in names:
+            raise ValueError("voice_not_installed_use_say_v_question_mark")
+    return selected
+
+
 class JSONWorker:
     def __init__(self, command, timeout=60):
         self.timeout = timeout
@@ -587,11 +604,15 @@ def main():
     parser.add_argument("--model", help="User-supplied whisper.cpp model; required with --wav/--serve")
     parser.add_argument("--evidence", type=pathlib.Path)
     parser.add_argument("--play", action="store_true")
+    parser.add_argument("--voice", help="Exact installed macOS say voice name (default: Yuna)")
     parser.add_argument("--cast-name", required=True, help="Exact friendly name; no fallback speaker")
     parser.add_argument("--execute-volume", action="store_true", help="Opt in to volume commands with readback")
     args = parser.parse_args()
     if (args.wav or args.serve) and not args.model: parser.error("--model is required for audio input")
     if args.execute_volume and not args.play: parser.error("--execute-volume requires --play")
+    try: selected_voice = resolve_say_voice(args.voice)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        parser.error(str(exc) if isinstance(exc, ValueError) else "cannot_list_installed_say_voices")
     with tempfile.TemporaryDirectory(prefix="jarvis-mac-voice-") as directory, contextlib.ExitStack() as cleanup:
         from jarvis_cursor_qa import CursorQA
         from whisper_cpp_worker import worker_command
@@ -611,7 +632,7 @@ def main():
             text, wav = request.get("text"), request.get("wav")
             if bool(text) == bool(wav): raise ValueError("exactly_one_text_or_wav_required")
             if text is not None and (not isinstance(text, str) or len(text) > 4000): raise ValueError("invalid_text")
-            speech = SpeechQueue(directory, cast)
+            speech = SpeechQueue(directory, cast, voice=selected_voice)
             try:
                 # Known direct text commands need no model prewarm either.
                 use_qa = qa if wav or route(text)["intent"] == "knowledge" else None
@@ -619,6 +640,7 @@ def main():
                                   evidence=evidence, stt=stt, wav=wav, command_executor=executor,
                                   reviewed_facts=False)
                 result["configured_backend"] = "cursor"
+                result["configured_voice"] = selected_voice
                 print(json.dumps(result, ensure_ascii=False), flush=True)
             finally:
                 speech.finish()

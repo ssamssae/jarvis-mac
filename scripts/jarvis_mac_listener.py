@@ -175,6 +175,7 @@ def main():
             state('answering', False)
             receipt = {'input_kind':'microphone', 'wake_mode':'local_transcription_utterance_prefix',
                        'recognized_text':text, 'question':question, 'stt_s':stt_s,
+                       'configured_voice':config.get('voice', 'Yuna'),
                        'speech_started_wall':event['speech_started_wall'],
                        'speech_ended_wall':event['speech_ended_wall'],
                        'capture_ended_wall':event['capture_ended_wall'],
@@ -186,7 +187,7 @@ def main():
                     cast = cast_session.connect(receipt)
                     qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
                     cleanup.callback(qa.close)
-                    speech = SpeechQueue(cast_session.directory, cast)
+                    speech = SpeechQueue(cast_session.directory, cast, voice=config.get('voice', 'Yuna'))
                     active_speech = speech
                     cleanup.callback(finish_speech, speech)
                     # Acknowledge only a recognized, wake-qualified question. The

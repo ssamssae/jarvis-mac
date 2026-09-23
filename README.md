@@ -20,7 +20,7 @@ Mac microphone → local whisper.cpp → “자비스” wake gate
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)의 `whisper-cli`와 한국어를 지원하는 모델 파일. 직접 설치·다운로드하고 해당 라이선스를 확인하세요. 모델이나 실행 파일은 이 저장소에 포함하지 않습니다.
 - [Cursor CLI](https://cursor.com/docs/cli/overview)에 본인 계정으로 로그인하고 모델을 선택해 둡니다. 기본 실행 파일은 `~/.local/bin/agent`입니다. 사용자 계정의 사용량·플랜·서비스 약관이 적용되며 무료 사용을 보장하지 않습니다.
 - 같은 신뢰할 수 있는 로컬 네트워크에 있는 Google Nest/Cast 스피커의 **정확한 기기 이름**. VPN·게스트 네트워크·방화벽은 검색/재생을 막을 수 있습니다.
-- macOS 한국어 `Yuna` 음성. `say -v '?'`에서 확인하고 없으면 시스템 설정에서 추가합니다.
+- macOS 한국어 음성(기본값 `Yuna`). `say -v '?'`에서 확인하고 없으면 시스템 설정에서 추가합니다.
 
 ## 설치 및 사용
 
@@ -37,6 +37,8 @@ python3 scripts/install-jarvis-mac-listener.py \
 ```
 
 `--cast-name`과 `--model`은 필수입니다. `--whisper-cli`를 생략하면 현재 PATH에서 찾습니다. 다른 Cursor 실행 파일은 `--cursor-binary /absolute/path/to/agent`로 지정합니다.
+
+답변 음성은 `--voice '설치된 음성 이름'`으로 바꿉니다. `say -v '?'`에 나온 이름 전체를 공백·괄호까지 정확히 지정하세요. 설치된 음성인지 먼저 확인하며, 옵션을 생략하면 업데이트 시 기존 선택을 유지하고 최초 설치는 `Yuna`를 사용합니다. 음성의 자연스러움은 설치된 음성에 따라 달라집니다.
 
 설치기는 소스를 복사하고 전용 가상환경에 `pychromecast==14.0.9`를 설치한 뒤 네이티브 앱을 컴파일·로컬 서명합니다. 인터넷과 개발 도구가 필요합니다. `--start`를 주었을 때만 즉시 시작합니다. 생략하면 다음 GUI 로그인부터 실행됩니다. 다른 앱이나 서비스를 재시작하지 않습니다.
 
@@ -74,6 +76,8 @@ python3 -m venv .venv
   --text '하늘이 파란 이유를 한 문장으로 알려줘' \
   --cast-name 'My Nest Mini' --play
 ```
+
+텍스트/WAV 실행도 `--voice '설치된 음성 이름'`을 지원하며 기본값은 `Yuna`입니다.
 
 `--play`가 없으면 음성 파일 합성까지만 실행하고 임시 파일을 정리합니다. `--wav question.wav --model /path/model.bin --whisper-cli /path/whisper-cli`로 로컬 인식을 포함할 수 있습니다. WAV는 16 kHz, 모노, 16-bit PCM이어야 합니다.
 
