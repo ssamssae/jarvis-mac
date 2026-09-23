@@ -237,8 +237,8 @@ class CastOutput:
             self.target = next((c for c in casts if c.name == name), None)
             if self.target is None: raise RuntimeError("exact_cast_target_missing")
             self.target.wait(timeout=8)
-            self.target.media_controller.update_status(); time.sleep(.3)
-            if self.target.media_controller.status.player_state in {"PLAYING", "PAUSED", "BUFFERING"}:
+            snapshot = self.refresh_status()
+            if snapshot["media"].get("playerState") in {"PLAYING", "PAUSED", "BUFFERING"}:
                 raise RuntimeError("existing_media_preserved")
             parent = self
             class Handler(http.server.SimpleHTTPRequestHandler):
@@ -266,10 +266,60 @@ class CastOutput:
             time.sleep(.05)
         return {"verified": False, "expected": expected, "observed": self.target.status.volume_level}
 
+    @staticmethod
+    def request_status(send, expected_type, timeout):
+        received = threading.Event()
+        replies = []
+        def reply(success, data):
+            replies.append(data if success and isinstance(data, dict) else None)
+            received.set()
+        send(callback_function=reply)
+        if not received.wait(timeout) or not replies or not replies[0] or replies[0].get("type") != expected_type:
+            raise TimeoutError("cast_status_unavailable")
+        return replies[0]
+
+    def refresh_status(self, timeout=3):
+        """Read raw receiver/media replies without launching or replacing an app.
+
+        MediaController.update_status() can launch DefaultMediaReceiver. Never use
+        it for ownership checks, including polling and cleanup. Cached MediaStatus
+        also retains old content IDs on empty replies, so only raw payloads count.
+        """
+        receiver = self.target.socket_client.receiver_controller
+        raw = self.request_status(receiver.update_status, "RECEIVER_STATUS", timeout)
+        status = raw.get("status")
+        if not isinstance(status, dict): raise RuntimeError("cast_status_unavailable")
+        apps = status.get("applications", [])
+        if not isinstance(apps, list): raise RuntimeError("cast_status_unavailable")
+        if not apps:
+            return {"media": {}, "session_id": None, "transport_id": None}
+        if len(apps) != 1 or not isinstance(apps[0], dict):
+            raise RuntimeError("existing_media_preserved")
+        app = apps[0]
+        if app.get("appId") == "E8C28D3C":  # Google Backdrop / idle receiver
+            return {"media": {}, "session_id": None, "transport_id": None}
+        namespaces = app.get("namespaces", [])
+        if (app.get("appId") != "CC1AD845" or not isinstance(namespaces, list)
+                or not any(isinstance(n, dict) and n.get("name") == "urn:x-cast:com.google.cast.media" for n in namespaces)
+                or not app.get("sessionId") or not app.get("transportId")):
+            raise RuntimeError("existing_media_preserved")
+        mc = self.target.media_controller
+        raw_media = self.request_status(
+            lambda **kw: mc.send_message_nocheck({"type": "GET_STATUS"}, **kw),
+            "MEDIA_STATUS", timeout)
+        entries = raw_media.get("status")
+        if not isinstance(entries, list) or len(entries) > 1:
+            raise RuntimeError("cast_status_unavailable")
+        media = entries[0] if entries else {}
+        if not isinstance(media, dict): raise RuntimeError("cast_status_unavailable")
+        return {"media": media, "session_id": app["sessionId"], "transport_id": app["transportId"]}
+
     def play(self, path, on_started):
         mc = self.target.media_controller
-        mc.update_status()
-        if mc.status.player_state in {"PLAYING", "PAUSED", "BUFFERING"} and mc.status.content_id not in self.owned_urls:
+        snapshot = self.refresh_status()
+        status = snapshot["media"]
+        content = (status.get("media") or {}).get("contentId")
+        if status.get("playerState") in {"PLAYING", "PAUSED", "BUFFERING"} and content not in self.owned_urls:
             raise RuntimeError("existing_media_preserved")
         suffix = "/" + pathlib.Path(path).name
         url = self.base + suffix
@@ -278,17 +328,40 @@ class CastOutput:
         first = None; deadline = time.monotonic() + 50
         while time.monotonic() < deadline:
             if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
-            mc.update_status(); time.sleep(.1)
-            status = mc.status
-            if status.content_id != url: continue  # Reject the previous clip's cached status.
+            snapshot = self.refresh_status()
+            status = snapshot["media"]
+            if (status.get("media") or {}).get("contentId") != url:
+                time.sleep(.1)
+                continue  # An empty/partial reply never inherits cached ownership.
+            self.owned_session = (snapshot["session_id"], snapshot["transport_id"])
             with self.lock: fetched = self.started.get(suffix)
-            if status.player_state == "PLAYING" and fetched and first is None:
+            if status.get("playerState") == "PLAYING" and fetched and first is None:
                 first = time.monotonic(); on_started(first)
-            if status.player_state == "IDLE" and status.idle_reason in {"ERROR", "INTERRUPTED", "CANCELLED"}:
-                raise RuntimeError("cast_playback_" + status.idle_reason.lower())
-            if first is not None and status.player_state == "IDLE" and status.idle_reason == "FINISHED":
+            reason = status.get("idleReason")
+            if status.get("playerState") == "IDLE" and reason in {"ERROR", "INTERRUPTED", "CANCELLED"}:
+                raise RuntimeError("cast_playback_" + reason.lower())
+            if first is not None and status.get("playerState") == "IDLE" and reason == "FINISHED":
+                with self.lock:
+                    self.started.clear()
+                    self.owned_urls.intersection_update({url})
                 return {"cast_start_s": first - began, "finished": True, "finished_at": time.monotonic()}
+            time.sleep(.1)
         raise TimeoutError("cast_playback_timeout")
+
+    def stop_owned_media(self):
+        # Failure to prove ownership means disconnect only, never stop another app.
+        if not self.owned_urls or not getattr(self, "owned_session", None): return
+        try:
+            snapshot = self.refresh_status(timeout=1)
+            content = (snapshot["media"].get("media") or {}).get("contentId")
+            identity = (snapshot["session_id"], snapshot["transport_id"])
+            if content not in self.owned_urls or identity != self.owned_session: return
+            receiver = self.target.socket_client.receiver_controller
+            # Address the observed session explicitly: quit_app() uses mutable cached
+            # session state and could stop a newly switched app during this race.
+            receiver.send_message({"type": "STOP", "sessionId": snapshot["session_id"]})
+        except Exception:
+            return
 
     def close(self):
         # Each resource is attempted even if a disconnected device raises during cleanup.
@@ -296,9 +369,7 @@ class CastOutput:
             try: operation()
             except Exception as exc: self.cleanup_errors.append(name + ":" + type(exc).__name__)
         if self.target:
-            mc = self.target.media_controller
-            if mc.status.content_id in self.owned_urls:
-                attempt("quit_owned_media", self.target.quit_app)
+            attempt("stop_owned_media", self.stop_owned_media)
             attempt("disconnect", self.target.disconnect)
         attempt("stop_discovery", lambda: self.api.discovery.stop_discovery(self.browser))
         if self.server:
@@ -406,6 +477,8 @@ def run_turn(text, qa, speech, *, stream=False, prewarm=False, evidence=None, st
                 if event.get("done"):
                     metrics["answer"] = event["answer"]
                     if event.get("backend"): metrics["generation_backend"] = event["backend"]
+                    for key in ("provider_duration_ms", "elapsed_s", "timings"):
+                        if key in event: metrics["generation_" + key] = event[key]
             metrics["generation_s"] = time.monotonic() - start
     speech.finish()
     metrics["speech"] = speech.events

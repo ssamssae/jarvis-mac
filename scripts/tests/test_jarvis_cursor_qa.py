@@ -32,7 +32,8 @@ class CursorTests(unittest.TestCase):
         args=m.cursor_command('/agent','/workspace')
         for flag in ['--model','--resume','--api-key','--force','--yolo']:self.assertNotIn(flag,args)
         self.assertEqual(args[args.index('--mode')+1],'ask')
-        self.assertEqual(args[args.index('--output-format')+1],'json')
+        self.assertEqual(args[args.index('--output-format')+1],'stream-json')
+        self.assertIn('--stream-partial-output',args)
 
     def fake(self,root,body):
         exe=root/'agent';exe.write_text('#!/usr/bin/env python3\n'+body);exe.chmod(0o700)
@@ -75,6 +76,57 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':
             root=pathlib.Path(tmp);(root/'cli-config.json').write_text('{}')
             with self.assertRaisesRegex(RuntimeError,'selected_model_missing'):
                 list(m.CursorQA('/nonexistent',root).ask('질문'))
+
+    def run_records(self, records, ending='', timeout=3):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = 'import json,sys,time\nsys.stdin.read()\n'
+            for record in records:
+                body += 'print('+repr(json.dumps(record))+',flush=True)\ntime.sleep(.02)\n'
+            exe,config,_=self.fake(pathlib.Path(tmp),body+ending)
+            worker=m.CursorQA(exe,config,timeout=timeout)
+            try: return list(worker.ask('질문'))
+            finally: self.assertIsNone(worker.process)
+
+    def test_stream_observes_delta_not_duplicate_flush_and_only_yields_final(self):
+        records=[{'type':'system','subtype':'init','session_id':'do-not-return'},
+                 {'type':'assistant','timestamp_ms':1,'model_call_id':'duplicate',
+                  'message':{'content':[{'type':'text','text':'never spoken'}]}},
+                 {'type':'assistant','message':{'content':[{'type':'text','text':'final flush'}]}},
+                 {'type':'assistant','timestamp_ms':2,'message':{'content':[{'type':'text','text':'partial'}]}},
+                 {'type':'result','subtype':'success','is_error':False,'result':'완성 답변','duration_api_ms':10}]
+        events=self.run_records(records)
+        self.assertEqual(len(events),1);self.assertEqual(events[0]['answer'],'완성 답변')
+        timings=events[0]['timings']
+        self.assertLess(timings['init_s'],timings['first_delta_s'])
+        self.assertGreater(timings['first_delta_s']-timings['init_s'],.04)
+        self.assertLessEqual(timings['first_delta_s'],timings['result_s'])
+        self.assertLessEqual(timings['result_s'],timings['process_exit_s'])
+        self.assertNotIn('do-not-return',json.dumps(events));self.assertNotIn('partial',json.dumps(events))
+
+    def test_missing_duplicate_or_error_terminal_never_yields_answer(self):
+        success={'type':'result','subtype':'success','is_error':False,'result':'답변'}
+        for records in [[],[success,success],[dict(success,subtype='error',is_error=True)]]:
+            with self.assertRaisesRegex(RuntimeError,'no_success_result'):self.run_records(records)
+        with self.assertRaisesRegex(RuntimeError,'cursor_failed_exit_7'):
+            self.run_records([success], 'sys.exit(7)\n')
+
+    def test_stream_malformed_or_oversized_output_rejected(self):
+        with self.assertRaisesRegex(RuntimeError,'cursor_invalid_json'):
+            self.run_records([], 'print("private non-json diagnostic")\n')
+        with self.assertRaisesRegex(RuntimeError,'cursor_output_too_large'):
+            self.run_records([], 'sys.stderr.write("x"*1000001);sys.stderr.flush();time.sleep(20)\n')
+
+    def test_success_result_without_process_exit_still_times_out(self):
+        with self.assertRaisesRegex(TimeoutError,'cursor_timeout'):
+            self.run_records([{'type':'result','subtype':'success','is_error':False,'result':'not yet safe'}],
+                             'time.sleep(20)\n', timeout=.2)
+
+    def test_duplicate_only_stream_has_no_first_delta(self):
+        events=self.run_records([
+            {'type':'assistant','timestamp_ms':1,'model_call_id':'buffered',
+             'message':{'content':[{'type':'text','text':'duplicate'}]}},
+            {'type':'result','subtype':'success','is_error':False,'result':'완성 답변'}])
+        self.assertIsNone(events[0]['timings']['first_delta_s'])
 
     def test_unsupported_options_are_rejected(self):
         worker=m.CursorQA('/nonexistent')

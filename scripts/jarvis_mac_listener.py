@@ -63,6 +63,57 @@ def checked_audio(event, audio_dir):
     return path
 
 
+class CastSession:
+    """One listener-owned connection and a private, audio-only HTTP document root."""
+    def __init__(self, name):
+        self.name = name
+        # Never serve the state/config directory, even during recovery.
+        self._temporary = tempfile.TemporaryDirectory(prefix='jarvis-listener-speech-')
+        self.directory = Path(self._temporary.name)
+        self.cast = None
+        self.startup_prepare_s = 0.0
+        self.startup_prepare_error = None
+
+    def prepare_startup(self):
+        metrics = {}
+        try:
+            self.connect(metrics)
+        except Exception as exc:
+            # Keep microphone/wake recognition available if the speaker is offline/busy.
+            self.startup_prepare_error = type(exc).__name__
+        finally:
+            self.startup_prepare_s = metrics['cast_connect_s']
+
+    def connect(self, receipt):
+        receipt['startup_prepare_s'] = self.startup_prepare_s
+        receipt['startup_prepare_error'] = self.startup_prepare_error
+        receipt['cast_reused'] = self.cast is not None
+        receipt['cast_connect_s'] = 0.0
+        if self.cast is None:
+            started = time.monotonic()
+            try:
+                self.cast = CastOutput(self.name, str(self.directory))
+            finally:
+                receipt['cast_connect_s'] = time.monotonic() - started
+        return self.cast
+
+    def clear_audio(self):
+        # Called only after the current speech worker finishes (or is cancelled).
+        for path in self.directory.glob('*.wav'):
+            path.unlink(missing_ok=True)
+
+    def invalidate(self):
+        cast, self.cast = self.cast, None
+        if cast is not None:
+            cast.close()
+
+    def close(self):
+        try:
+            self.invalidate()
+        finally:
+            self._temporary.cleanup()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', type=Path, required=True)
@@ -95,10 +146,15 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     stt = None
+    cast_session = None
     try:
         state('preparing', False)
         stt = JSONWorker(worker_command(config))
-        state('listening', True)
+        cast_session = CastSession(config['cast_name'])
+        cast_session.prepare_startup()
+        state('listening', True, cast_prepared=cast_session.cast is not None,
+              startup_prepare_s=cast_session.startup_prepare_s,
+              startup_prepare_error=cast_session.startup_prepare_error)
         for line in sys.stdin:
             event = json.loads(line)
             path = checked_audio(event, audio_dir)
@@ -124,14 +180,11 @@ def main():
                        'capture_ended_wall':event['capture_ended_wall'],
                        'endpoint_s':event['capture_ended_wall']-event['speech_ended_wall']}
             try:
-                with tempfile.TemporaryDirectory(prefix='speech-', dir=root) as directory, contextlib.ExitStack() as cleanup:
+                with contextlib.ExitStack() as cleanup:
+                    cast = cast_session.connect(receipt)
                     qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
                     cleanup.callback(qa.close)
-                    started = time.monotonic()
-                    cast = CastOutput(config['cast_name'], directory)
-                    cleanup.callback(cast.close)
-                    receipt['cast_connect_s'] = time.monotonic()-started
-                    speech = SpeechQueue(directory, cast)
+                    speech = SpeechQueue(cast_session.directory, cast)
                     active_speech = speech
                     cleanup.callback(finish_speech, speech)
                     # The listener only answers; device commands remain disabled.
@@ -144,13 +197,17 @@ def main():
                         receipt['speech_start_to_playing_s'] = playing_wall-event['speech_started_wall']
                     receipt['result'] = 'pass'
             except Exception as exc:
+                # No replay/retry within a turn: reconnect only on the next question.
+                cast_session.invalidate()
                 receipt['result'] = 'error'
                 # Avoid raw provider output, credentials, or unrelated source paths.
                 receipt['error_type'] = type(exc).__name__
                 receipt['error_code'] = str(exc) if str(exc) in {
                     'cursor_keychain_locked', 'cursor_login_required', 'cursor_timeout',
                     'existing_media_preserved', 'exact_cast_target_missing'} else 'turn_failed'
-            active_speech = None
+            finally:
+                cast_session.clear_audio()
+                active_speech = None
             receipt['finished_wall'] = time.time()
             atomic_json(root/'last-turn.json', receipt)
             time.sleep(.5)  # Discard Nest tail before rearming, not a new capture queue.
@@ -158,6 +215,7 @@ def main():
     except (KeyboardInterrupt, BrokenPipeError):
         pass
     finally:
+        if cast_session: cast_session.close()
         if stt: stt.close()
         for path in audio_dir.glob('*.wav'):
             path.unlink(missing_ok=True)
