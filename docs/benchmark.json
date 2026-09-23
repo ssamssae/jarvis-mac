@@ -15,11 +15,39 @@
     "engine": "user-supplied whisper-cli and model",
     "protocol_ready_and_text": true,
     "exit_code": 0,
-    "hardware_end_to_end_measured": false
+    "hardware_end_to_end_measured": true
   },
   "limitations": [
-    "Single prototype observation; not a performance guarantee",
+    "One successful public sample compared with one earlier prototype sample; not a controlled repeated benchmark or performance guarantee",
     "Public adapter starts whisper-cli per utterance; prototype used a different warm worker",
+    "Nest preparation occurs before listening; startup is reported separately, not eliminated",
+    "Cursor selected model unchanged; provider and network variability remain",
     "No private identities, exact utterance timestamps, device names, paths, audio or credentials included"
-  ]
+  ],
+  "public_hardware_validation": {
+    "sample_count": 1,
+    "input": "actual microphone utterance",
+    "adapter": "whisper_cpp_worker.py with user-supplied whisper-cli and multilingual small model",
+    "cursor_selected_model": "grok-4.6, effort=high, fast=true (unchanged from prototype)",
+    "speech_end_to_nest_playing_s": 26.149,
+    "endpoint_s": 0.896,
+    "stt_s": 0.692,
+    "retrieval_s": 0.912,
+    "cursor_generation_s": 20.397,
+    "cursor_phase_arrival_s": {
+      "init_s": 4.815,
+      "first_delta_s": 17.306,
+      "result_s": 19.902,
+      "process_exit_s": 20.389
+    },
+    "nest_connection_during_question_s": 0.0,
+    "nest_connection_reused": true,
+    "app_startup_connection_s": 0.597,
+    "first_app_startup_connection_observed_s": 12.831,
+    "speech_synthesis_s": 1.041,
+    "nest_play_start_s": 2.081,
+    "speaker_finished": true,
+    "user_confirmed_heard_once": true,
+    "prior_validation_attempt": "Heard once, but completion status timed out; fixed using owned raw terminal events before this successful sample."
+  }
 }

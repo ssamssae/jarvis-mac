@@ -96,7 +96,11 @@ Cursor는 기존 선택 모델을 그대로 사용하고 별도 임시 설정·�
 
 원형 구현은 실제 마이크 질문 → Cursor → Nest의 **1회 실제 청취**를 확인했습니다. 말 끝부터 재생까지 **39.07초**, 이 중 답변 생성 **21.88초**, Nest 연결 **13.47초**였습니다. 이는 속도 개선을 보여 주는 수치가 아닙니다.
 
-**그 측정은 별도의 Ipta warm STT helper를 사용한 비공개 환경의 단일 표본입니다. 공개판은 매 발화마다 `whisper-cli`를 시작하므로 같은 성능을 보장하지 않습니다.** 공개판의 기본 어댑터를 이용한 실제 마이크→Nest 전체 경로는 아직 실측하지 않았습니다. 공개 어댑터는 실제 로컬 whisper-cli와 사용자 제공 모델로 합성 WAV의 인식 성공도 확인했습니다. 이것은 마이크/스피커 전체 실측이 아닙니다. 가짜 실행 파일을 이용한 JSON 프로토콜·오류·종료 테스트 및 네이티브 컴파일도 별도로 확인했습니다. [측정 범위와 집계](docs/benchmark.json)를 참고하세요.
+연결 재사용을 적용한 **공개판의 기본 `whisper-cli` 어댑터로 실제 마이크 → Cursor → Nest 재생 및 정상 종료를 확인했고, 사용자가 답변을 한 번 들었다고 확인했습니다.** 같은 질문의 말 끝부터 재생까지 **26.15초**로, 앞선 원형 표본보다 **12.92초(약 33%)** 짧았습니다. 질문 중 Nest 연결은 재사용으로 **0초**, Cursor 생성은 **20.40초**, 음성 인식은 **0.69초**였습니다.
+
+앱 시작 때 연결 준비는 별도입니다. 첫 시작에서 **12.83초**, 정상 실측 직전 재시작에서는 **0.60초**가 걸렸습니다. 최초 시험에서는 답변은 한 번 들렸지만 종료 확인에 시간 초과가 발생하여, 순간적인 Nest 종료 알림을 소유한 재생 세션과 대조해 보관하도록 수정한 뒤 정상 종료를 재검증했습니다.
+
+**각 수치는 성공한 공개판 1회와 이전 원형 1회의 관측 비교이며 반복 통제 실험이 아닙니다.** 원형은 별도의 Ipta warm STT helper를 사용했고 공개판은 매 발화마다 `whisper-cli`를 시작합니다. Cursor 선택 모델은 같지만 서비스·네트워크 변동이 있으므로 같은 지연을 보장하지 않습니다. JSON 프로토콜·오류·종료 회귀검사와 네이티브 컴파일도 별도로 통과했습니다. [측정 범위와 집계](docs/benchmark.json)를 참고하세요.
 
 모델, 하드웨어, 선택한 Cursor 모델/서비스 상태, 네트워크에 따라 지연이 크게 달라집니다. Cursor의 부분 출력은 초기화·첫 글자·최종 결과·프로세스 종료의 도착 시간 계측에만 사용합니다. 최종 성공과 정상 종료를 확인한 뒤 답변 전체를 음성으로 합성하므로 미완성 답변이나 중복 출력은 읽지 않습니다. Cursor 모델 사전 준비는 사용하지 않습니다. `last-turn.json`에는 질문 중 연결 시간과 별도로 앱 시작 때의 `startup_prepare_s`, 연결 재사용 여부, Cursor 구간별 시간이 기록됩니다.
 
@@ -150,8 +154,10 @@ transcribed locally; wake-qualified question text and evidence reach Cursor.
 Latest question/answer metrics stay in local `last-turn.json`. Reply audio is
 served temporarily over unencrypted LAN HTTP. Wake words are not authentication.
 
-The 39.07-second prototype result used a different warm STT worker. The public
-adapter starts whisper-cli per utterance and has **not** completed a hardware
-end-to-end benchmark. Unit tests and compilation are not microphone/hearing proof.
+The public adapter completed a real microphone → Cursor → Nest trial in **26.15 seconds**
+from speech end to playback, with receiver completion and one user-confirmed playback.
+The earlier prototype took 39.07 seconds with a different warm STT worker. These are
+single observations, not a controlled repeated benchmark. Nest startup preparation
+is reported separately; the selected Cursor model was unchanged. See the benchmark JSON.
 Cursor usage is subject to your own account and terms; it is not bundled or made
 free by this project. MIT covers only this repository's original code.
