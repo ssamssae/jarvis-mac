@@ -146,9 +146,9 @@ final class Listener: NSObject, NSApplicationDelegate {
         let base = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/JarvisMacOSS")
         let raw = try Data(contentsOf: base.appendingPathComponent("config.json"))
-        guard let config = try JSONSerialization.jsonObject(with: raw) as? [String: String],
-              let python = config["python"], let controller = config["controller"],
-              let dir = config["state_dir"], python.hasPrefix("/"), controller.hasPrefix("/"), dir.hasPrefix("/")
+        guard let config = try JSONSerialization.jsonObject(with: raw) as? [String: Any],
+              let python = config["python"] as? String, let controller = config["controller"] as? String,
+              let dir = config["state_dir"] as? String, python.hasPrefix("/"), controller.hasPrefix("/"), dir.hasPrefix("/")
         else { throw NSError(domain: "JarvisConfig", code: 1) }
         stateDir = URL(fileURLWithPath: dir)
         configured = true
