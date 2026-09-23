@@ -189,6 +189,10 @@ def main():
                     speech = SpeechQueue(cast_session.directory, cast)
                     active_speech = speech
                     cleanup.callback(finish_speech, speech)
+                    # Acknowledge only a recognized, wake-qualified question. The
+                    # same queue serializes this sound before the eventual answer,
+                    # while Cursor generation proceeds on this controller thread.
+                    speech.submit_acknowledgement()
                     # The listener only answers; device commands remain disabled.
                     pipeline = run_turn(question, qa, speech, reviewed_facts=False, metrics=receipt['pipeline'])
                     receipt['pipeline'] = pipeline
@@ -212,6 +216,10 @@ def main():
             finally:
                 if speech is not None:
                     receipt['pipeline']['speech'] = speech.events
+                    if speech.ack_first_playing is not None:
+                        ack_wall = time.time()-(time.monotonic()-speech.ack_first_playing)
+                        receipt['ack_playing_wall'] = ack_wall
+                        receipt['speech_end_to_ack_s'] = ack_wall-event['speech_ended_wall']
                     if speech.first_playing is not None:
                         playing_wall = time.time()-(time.monotonic()-speech.first_playing)
                         receipt['playing_wall'] = playing_wall
