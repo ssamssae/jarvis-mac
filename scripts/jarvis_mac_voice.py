@@ -15,16 +15,20 @@ import functools
 import hashlib
 import http.server
 import json
+import math
+import os
 import pathlib
 import queue
 import re
 import selectors
 import socket
 import subprocess
+import struct
 import tempfile
 import threading
 import time
 import urllib.request
+import wave
 from html.parser import HTMLParser
 
 ABSTAIN = "확인할 근거가 없어 정확히 답하기 어려워요."
@@ -424,16 +428,56 @@ class SpeechQueue:
         self.directory = pathlib.Path(directory); self.cast = cast; self.voice = voice
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.queue = queue.Queue(); self.events = []; self.first_playing = None; self.error = None
-        self.thread = threading.Thread(target=self.consume, daemon=True); self.thread.start()
+        self.ack_first_playing = None
+        self.ack_requested = False
         self.count = 0
         self.cancelled = threading.Event()
         self.process_lock = threading.Lock()
         self.processes = set()
         self.prefix = str(time.monotonic_ns())
+        self.thread = threading.Thread(target=self.consume, daemon=True); self.thread.start()
 
     def submit(self, text):
         number = self.count; self.count += 1
-        self.queue.put((text, self.pool.submit(self.synthesize, number, text)))
+        self.queue.put(("answer", text, self.pool.submit(self.synthesize, number, text)))
+
+    def submit_acknowledgement(self):
+        """Queue one nonverbal input receipt; never wait for Cast or block generation."""
+        if self.ack_requested or self.count:
+            raise RuntimeError("acknowledgement_must_be_first_and_once")
+        if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
+        self.ack_requested = True
+        self.queue.put(("ack", None, self.pool.submit(self.synthesize_acknowledgement)))
+
+    def synthesize_acknowledgement(self):
+        path = self.directory / f"{self.prefix}-ack.wav"
+        began = time.monotonic()
+        try:
+            if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
+            rate = 24000
+            frames = bytearray()
+            # A quiet rising pair, 250 ms sound with 10 ms fades, padded to 700 ms.
+            # Padding lets the receiver report PLAYING without prolonging the tone.
+            for index in range(int(rate * .7)):
+                at = index / rate
+                value = 0.0
+                for start, duration, frequency in ((.03, .12, 660), (.19, .13, 880)):
+                    elapsed = at - start
+                    if 0 <= elapsed < duration:
+                        envelope = min(1.0, elapsed / .01, (duration - elapsed) / .01)
+                        value = .09 * envelope * math.sin(2 * math.pi * frequency * elapsed)
+                frames.extend(struct.pack("<h", round(value * 32767)))
+            if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as output:
+                with wave.open(output, "wb") as audio:
+                    audio.setnchannels(1); audio.setsampwidth(2); audio.setframerate(rate)
+                    audio.writeframes(frames)
+            if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
+            return path, time.monotonic() - began
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
 
     def synthesize(self, number, text):
         path = self.directory / f"{self.prefix}-sentence-{number}.wav"; start = time.monotonic()
@@ -454,14 +498,17 @@ class SpeechQueue:
             while True:
                 item = self.queue.get()
                 if item is None: return
-                text, future = item
+                kind, text, future = item
                 if self.cancelled.is_set(): future.cancel(); continue
                 path, synthesis = future.result()
                 if self.cancelled.is_set(): continue
-                event = {"text": text, "synthesis_s": synthesis}
+                event = {"kind": kind, "synthesis_s": synthesis}
+                if kind == "answer": event["text"] = text
                 if self.cast:
                     def started(at):
-                        if self.first_playing is None: self.first_playing = at
+                        if kind == "ack":
+                            if self.ack_first_playing is None: self.ack_first_playing = at
+                        elif self.first_playing is None: self.first_playing = at
                     event.update(self.cast.play(path, started))
                 self.events.append(event)
         except BaseException as exc: self.error = exc
