@@ -15,6 +15,7 @@ import time
 
 from jarvis_mac_voice import JSONWorker, CastOutput, SpeechQueue, run_turn
 from jarvis_cursor_qa import CursorQA
+from jarvis_smart_home import SmartHome
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -128,6 +129,7 @@ def main():
         raise SystemExit('listener_already_running')
     config = json.loads((root/'config.json').read_text())
     gate = WakeGate()
+    home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
         payload = {'state':name, 'listen':listen, 'updated_at':time.time(), 'pid':os.getpid(), **extra}
         atomic_json(root/'status.json', payload)
@@ -185,8 +187,6 @@ def main():
             try:
                 with contextlib.ExitStack() as cleanup:
                     cast = cast_session.connect(receipt)
-                    qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
-                    cleanup.callback(qa.close)
                     speech = SpeechQueue(cast_session.directory, cast, voice=config.get('voice', 'Yuna'))
                     active_speech = speech
                     cleanup.callback(finish_speech, speech)
@@ -194,8 +194,18 @@ def main():
                     # same queue serializes this sound before the eventual answer,
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
-                    # The listener only answers; device commands remain disabled.
-                    pipeline = run_turn(question, qa, speech, reviewed_facts=False, metrics=receipt['pipeline'])
+                    plan = home.plan(question)
+                    if plan is not None:
+                        result = home.execute(plan, explicit_voice=True)
+                        receipt['smart_home'] = result
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent': result['intent']}, answer=result['answer'])
+                        speech.submit(result['answer'])
+                        speech.finish()
+                    else:
+                        qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
+                        cleanup.callback(qa.close)
+                        pipeline = run_turn(question, qa, speech, reviewed_facts=False, metrics=receipt['pipeline'])
                     receipt['pipeline'] = pipeline
                     if speech.first_playing is not None:
                         playing_wall = time.time()-(time.monotonic()-speech.first_playing)
@@ -213,7 +223,9 @@ def main():
                     'cursor_keychain_locked', 'cursor_login_required', 'cursor_timeout',
                     'existing_media_preserved', 'exact_cast_target_missing',
                     'cast_status_unavailable', 'cast_playback_timeout',
-                    'cast_receiver_status_unavailable', 'cast_media_status_unavailable'} else 'turn_failed'
+                    'cast_receiver_status_unavailable', 'cast_media_status_unavailable',
+                    'cast_playback_error', 'cast_playback_interrupted', 'cast_playback_cancelled',
+                    'speech_synthesis_failed', 'speech_encoding_failed', 'speech_queue_timeout'} else 'turn_failed'
             finally:
                 if speech is not None:
                     receipt['pipeline']['speech'] = speech.events

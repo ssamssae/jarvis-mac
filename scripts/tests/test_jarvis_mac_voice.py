@@ -144,6 +144,7 @@ class VoiceTests(unittest.TestCase):
                      status=N(content_id='http://ours/voice.wav',player_state='PLAYING'))
         receiver=N(update_status=receiver_status,send_message=lambda data:calls.append(data))
         cast=object.__new__(m.CastOutput)
+        cast.prepare_media=lambda path:path
         cast.target=N(socket_client=N(receiver_controller=receiver),media_controller=controller,
                       quit_app=forbidden,disconnect=lambda:calls.append('disconnect'))
         cast.owned_urls={'http://ours/voice.wav'};cast.owned_session=('owned-session','transport')

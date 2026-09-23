@@ -21,6 +21,7 @@ import pathlib
 import queue
 import re
 import selectors
+import shutil
 import socket
 import subprocess
 import struct
@@ -359,7 +360,49 @@ class CastOutput:
                     # Independent copies: library handlers can run in either order.
                     self.media_events.append((time.monotonic(), transport, json.loads(json.dumps(row))))
 
+    def prepare_media(self, path):
+        # Nest intermittently reports WAV PLAYING then ERROR ~30s later. AAC
+        # completes reliably in the live reproduction; keep the selected voice.
+        source = pathlib.Path(path)
+        target = source.with_suffix('.m4a')
+        try:
+            subprocess.run(['/usr/bin/afconvert', '-f', 'm4af', '-d', 'aac@44100',
+                            '-b', '64000', str(source), str(target)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, timeout=15)
+            target.chmod(0o600)
+            return target
+        except (OSError, subprocess.SubprocessError):
+            target.unlink(missing_ok=True)
+            raise RuntimeError('speech_encoding_failed') from None
+
     def play(self, path, on_started):
+        media = self.prepare_media(path)
+        try:
+            return self.play_prepared(media, on_started)
+        finally:
+            if pathlib.Path(media) != pathlib.Path(path):
+                pathlib.Path(media).unlink(missing_ok=True)
+
+    def play_prepared(self, path, on_started):
+        try:
+            return self._play_once(path, on_started)
+        except RuntimeError as exc:
+            if str(exc) != 'cast_playback_error' or self.cancelled.is_set():
+                raise
+            # Retry audio only after the receiver explicitly rejects OUR media.
+            # Never repeat a device command or take over interrupted/other media.
+            # The next _play_once repeats receiver/ownership checks before LOAD.
+            retry = pathlib.Path(path).with_name(pathlib.Path(path).stem + '-retry' + pathlib.Path(path).suffix)
+            try:
+                shutil.copyfile(path, retry)
+                retry.chmod(0o600)
+                result = self._play_once(retry, on_started)
+                return {**result, 'audio_retries': 1, 'first_error': 'cast_playback_error'}
+            finally:
+                retry.unlink(missing_ok=True)
+
+    def _play_once(self, path, on_started):
         mc = self.target.media_controller
         snapshot = self.refresh_status()
         status = snapshot["media"]
@@ -370,7 +413,7 @@ class CastOutput:
         url = self.base + suffix
         began = time.monotonic(); self.owned_urls.add(url)
         with self.lock: self.media_events.clear()
-        mc.play_media(url, "audio/wav", title="Jarvis Mac voice", stream_type="BUFFERED")
+        mc.play_media(url, "audio/mp4" if pathlib.Path(path).suffix == ".m4a" else "audio/wav", title="Jarvis Mac voice", stream_type="BUFFERED")
         first = None; media_session = None; deadline = time.monotonic() + 50
         while time.monotonic() < deadline:
             if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
@@ -438,6 +481,7 @@ class CastOutput:
             attempt("http_close", self.server.server_close)
         if self.cleanup_errors:
             print(json.dumps({"cleanup_errors": self.cleanup_errors}), file=sys.stderr)
+
 
 
 class SpeechQueue:

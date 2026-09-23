@@ -58,7 +58,7 @@ def main():
             if path.is_dir(): shutil.copytree(path, backup/path.name)
             else: shutil.copy2(path, backup/path.name)
     runtime = root/'runtime'; runtime.mkdir(exist_ok=True)
-    for name in ('jarvis_mac_voice.py','jarvis_cursor_qa.py','jarvis_mac_listener.py','whisper_cpp_worker.py'):
+    for name in ('jarvis_mac_voice.py','jarvis_cursor_qa.py','jarvis_mac_listener.py','whisper_cpp_worker.py','jarvis_smart_home.py'):
         shutil.copy2(scripts/name, runtime/name)
     venv = root/'venv'
     if not (venv/'bin/python3').exists():
@@ -76,6 +76,7 @@ def main():
               'state_dir':str(root),'cast_name':args.cast_name,'model':str(args.model),
               'whisper_cli':str(whisper or ''),'cursor_binary':str(args.cursor_binary),
               'voice':selected_voice}
+    if 'smart_home' in existing: config['smart_home'] = existing['smart_home']
     if args.stt_worker: config['stt_worker'] = str(args.stt_worker)
     (root/'config.json').write_text(json.dumps(config, ensure_ascii=False, indent=2))
     (root/'config.json').chmod(0o600)
