@@ -50,13 +50,16 @@ class ControllerTests(unittest.TestCase):
     def test_generation_error_finishes_speech_before_cleanup(self):
         self.check_controller(True)
 
-    def check_controller(self, failing):
+    def test_configured_voice_reaches_speech_queue(self):
+        self.check_controller(False, voice="유나 (고품질)")
+
+    def check_controller(self, failing, voice="Yuna"):
         import io
         from unittest.mock import patch, MagicMock
         import jarvis_mac_listener as app
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); audio = root/'audio'; audio.mkdir()
-            (root/'config.json').write_text(json.dumps({'cast_name':'Test speaker','model':'/example/model.bin','whisper_cli':'whisper-cli'}))
+            (root/'config.json').write_text(json.dumps({'cast_name':'Test speaker','model':'/example/model.bin','whisper_cli':'whisper-cli', 'voice':voice}))
             events = []
             now = time.time()
             for n in range(2):
@@ -72,9 +75,10 @@ class ControllerTests(unittest.TestCase):
                  patch.object(app.signal,'signal'), patch.object(app.time,'sleep'), \
                  patch.object(app,'JSONWorker',return_value=stt), \
                  patch.object(app,'CursorQA') as qa, patch.object(app,'CastOutput'), \
-                 patch.object(app,'SpeechQueue',return_value=speech), \
+                 patch.object(app,'SpeechQueue',return_value=speech) as speech_factory, \
                  patch.object(app,'run_turn',return_value={'generation_backend':'cursor'}, side_effect=RuntimeError('test_failure') if failing else None) as turn:
                 app.main()
+            self.assertEqual(speech_factory.call_args.kwargs["voice"], voice)
             self.assertEqual(qa.call_count, 1)
             self.assertEqual(turn.call_args.args[0], '하늘이 파란 이유')
             self.assertFalse(turn.call_args.kwargs['reviewed_facts'])

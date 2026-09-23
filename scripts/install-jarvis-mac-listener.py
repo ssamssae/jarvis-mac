@@ -10,11 +10,14 @@ import shutil
 import sys
 import subprocess
 
+from jarvis_mac_voice import resolve_say_voice
+
 LABEL = 'com.ssamssae.jarvis-mac-oss'
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--start', action='store_true')
+    parser.add_argument('--voice', help='Exact installed macOS say voice; omitted preserves existing choice or defaults to Yuna')
     parser.add_argument('--cast-name', required=True, help='Exact Nest friendly name')
     parser.add_argument('--model', type=Path, required=True, help='User-provided whisper.cpp model')
     parser.add_argument('--whisper-cli', default='whisper-cli', help='Executable path or PATH name')
@@ -40,6 +43,10 @@ def main():
     app = home/'Applications/JarvisMacOSS.app'
     plist = home/'Library/LaunchAgents'/f'{LABEL}.plist'
     scripts = Path(__file__).resolve().parent
+    existing = json.loads((root/'config.json').read_text()) if (root/'config.json').exists() else {}
+    try: selected_voice = resolve_say_voice(args.voice, existing.get('voice'))
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        parser.error(str(exc) if isinstance(exc, ValueError) else 'cannot_list_installed_say_voices')
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if subprocess.run(['pgrep','-x','JarvisMacOSS'],capture_output=True).returncode == 0:
         raise SystemExit('JarvisMacOSS is running; quit its menu before updating')
@@ -67,7 +74,8 @@ def main():
     subprocess.run(['codesign','--force','--sign','-','--identifier',LABEL,str(app)],check=True)
     config = {'python':str(python),'controller':str(runtime/'jarvis_mac_listener.py'),
               'state_dir':str(root),'cast_name':args.cast_name,'model':str(args.model),
-              'whisper_cli':str(whisper or ''),'cursor_binary':str(args.cursor_binary)}
+              'whisper_cli':str(whisper or ''),'cursor_binary':str(args.cursor_binary),
+              'voice':selected_voice}
     if args.stt_worker: config['stt_worker'] = str(args.stt_worker)
     (root/'config.json').write_text(json.dumps(config, ensure_ascii=False, indent=2))
     (root/'config.json').chmod(0o600)
