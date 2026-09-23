@@ -169,3 +169,26 @@ single observations, not a controlled repeated benchmark. Nest startup preparati
 is reported separately; the selected Cursor model was unchanged. See the benchmark JSON.
 Cursor usage is subject to your own account and terms; it is not bundled or made
 free by this project. MIT covers only this repository's original code.
+
+## 선택 사항: 기존 로컬 스마트홈 루틴
+
+기본 설치는 기기를 제어하지 않습니다. 이미 사용 중인 로컬 실행기가 있다면
+`config.json`의 `smart_home`에 명시적으로 연결할 수 있습니다. 설정과 기기 정보는
+이 저장소에 커밋하지 마세요. 실행기 Python 모듈은 `plan_for_transcript`, `tuya_step`,
+`execute_plan`, `RunResult` 인터페이스를 제공해야 합니다.
+
+- `module`, `python`, `control_script`, `scheduler_script`: 기존 로컬 파일의 절대 경로.
+- `phrases`: 정확한 발화 → 기존 루틴의 표준 발화 매핑.
+- `devices`: 기기 별칭 → `routine` 표준 이름 또는 `on`/`off` 명령 인자 배열.
+- `scheduled_device`: 기존 실행기가 처리할 예약 기기 이름(선택).
+
+호출어를 통과한 직접 요청만 고정 규칙으로 분류합니다. 루틴 실행에는 Cursor 호출이
+없으며, 일반 질문의 Cursor 설정은 유지합니다. 모델이 생성한 텍스트는 기기 명령이
+될 수 없습니다. 기존 실행기의 단계·순서를 유지하고, 기존 TTS는 끈 뒤 현재 Nest
+음성 큐로 안내합니다. 부분 실패는 성공으로 안내하지 않습니다. IR 신호 전송은
+실물 전원 확인을 의미하지 않습니다. 물은 정확히 등록한 직접 발화에만 허용되며
+테스트에서는 `dry_run=True`를 사용하세요. 호출어는 사용자 인증 수단이 아닙니다.
+
+Nest가 해당 오디오에 명시적인 `ERROR`를 반환하면 새 URL로 **오디오만 한 번**
+재전송합니다. 기기 명령은 반복하지 않으며, 다른 미디어가 재생되거나 중단 신호가
+오면 재시도하지 않습니다. 선택한 목소리는 유지하고, 접수음과 답변 WAV를 macOS `afconvert`로 AAC/M4A로 변환해 전송합니다.
