@@ -18,9 +18,9 @@ from jarvis_cursor_qa import CursorQA
 from jarvis_smart_home import SmartHome
 from whisper_cpp_worker import worker_command
 
-WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
+WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
 # Korean ASR commonly omits spaces between the vocative and the question.
-KOREAN_WAKE = re.compile(r"^\s*(?:헤이\s*)?자비스(?:야)?[\s,.!?:，。！？]*")
+KOREAN_WAKE = re.compile(r"^\s*(?:헤이\s*)?(?:자비스|자르비스)(?:야)?[\s,.!?:，。！？]*")
 
 
 class WakeGate:

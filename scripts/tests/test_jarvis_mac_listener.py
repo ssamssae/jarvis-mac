@@ -16,6 +16,19 @@ class ListenerTests(unittest.TestCase):
         self.assertEqual(gate.accept('헤이 자비스야 하늘이 파래?', 2), ('question','하늘이 파래?'))
         self.assertEqual(gate.accept('자비스하늘이 파란 이유', 3), ('question','하늘이 파란 이유'))
         self.assertEqual(gate.accept('Hey Jarvis, hello', 4), ('question','hello'))
+    def test_english_pronunciation_aliases_and_boundaries(self):
+        for name in ('Jarvis', 'JARVIS', '자르비스'):
+            with self.subTest(name=name):
+                gate = WakeGate()
+                self.assertEqual(gate.accept(name, 1), ('armed', ''))
+                self.assertEqual(gate.accept('복도 조명 꺼 주세요', 2),
+                                 ('question', '복도 조명 꺼 주세요'))
+                self.assertEqual(gate.accept('Hey ' + name + ', 복도 조명 꺼 주세요', 3),
+                                 ('question', '복도 조명 꺼 주세요'))
+        for text in ('Jarvice', 'Hey Jarvice', '잘바이스', '저비스', 'Jarvices test', 'Jarvison test', 'I said Jarvice', 'service', '저 비슷해'):
+            self.assertEqual(WakeGate().accept(text, 1), ('ignored', ''))
+        self.assertEqual(WakeGate().accept('헤이 자르비스', 1), ('armed', ''))
+
     def test_ambient_does_not_trigger(self):
         gate = WakeGate()
         for text in ['하늘이 파란 이유', '나는 자비스라고 말했다', 'Jarvison test', '안녕 자비스']:
