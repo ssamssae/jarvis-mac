@@ -118,3 +118,25 @@ class CancellationTests(unittest.TestCase):
             self.assertFalse(queue.thread.is_alive())
 
 if __name__ == '__main__': unittest.main()
+
+class WakeCueTests(unittest.TestCase):
+    def test_wake_only_plays_before_arming_without_model_or_device(self):
+        import io
+        from unittest.mock import patch,MagicMock
+        import jarvis_mac_listener as app
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);audio=root/'audio';audio.mkdir();clip=audio/'wake.wav';clip.write_bytes(b'x'*44)
+            (root/'config.json').write_text(json.dumps({'cast_name':'fixture','model':'fixture','whisper_cli':'fixture'}))
+            now=time.time();event={'wav':str(clip),'speech_started_wall':now-2,'speech_ended_wall':now-1,'capture_ended_wall':now}
+            stt=MagicMock();stt.read.return_value={'text':'자비스'}
+            cue=MagicMock();cue.events=[{'kind':'ack','finished':True}];cue.ack_first_playing=time.monotonic()
+            output=io.StringIO()
+            with patch.object(sys,'argv',['listener','--state-dir',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps(event)+'\n')),patch.object(sys,'stdout',output),patch.object(app.signal,'signal'),patch.object(app,'JSONWorker',return_value=stt),patch.object(app,'CastOutput'),patch.object(app,'SpeechQueue',return_value=cue),patch.object(app,'SmartHome') as home,patch.object(app,'CursorQA') as qa:
+                app.main()
+            qa.assert_not_called();home.return_value.plan.assert_not_called();home.return_value.execute.assert_not_called()
+            cue.submit_acknowledgement.assert_called_once();cue.finish.assert_called_once()
+            states=[json.loads(x) for x in output.getvalue().splitlines()]
+            self.assertLess(next(i for i,x in enumerate(states) if x['state']=='speaking'),next(i for i,x in enumerate(states) if x['state']=='armed'))
+            self.assertEqual(next(x for x in states if x['state']=='armed')['armed_seconds'],8)
+            self.assertEqual(json.loads((root/'last-wake.json').read_text())['result'],'pass')
+            self.assertFalse((root/'last-turn.json').exists())
