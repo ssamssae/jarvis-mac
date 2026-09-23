@@ -64,6 +64,7 @@ class ControllerTests(unittest.TestCase):
                 events.append({'wav':str(path),'speech_started_wall':now-3,'speech_ended_wall':now-1,'capture_ended_wall':now})
             stt = MagicMock(); stt.read.side_effect = [{'text':'일반 대화'}, {'text':'자비스, 하늘이 파란 이유'}]
             speech = MagicMock(); speech.first_playing = time.monotonic()
+            speech.events = []
             with patch.object(sys,'argv',['listener','--state-dir',str(root)]), \
                  patch.object(sys,'stdin',io.StringIO(''.join(json.dumps(e)+'\n' for e in events))), \
                  patch.object(sys,'stdout',io.StringIO()), \
@@ -79,7 +80,7 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(list(audio.iterdir()), [])
             receipt = json.loads((root/'last-turn.json').read_text())
             self.assertEqual(receipt['result'],'error' if failing else 'pass')
-            if not failing: self.assertGreater(receipt['speech_end_to_playing_s'],0)
+            self.assertGreater(receipt['speech_end_to_playing_s'],0)
             self.assertNotIn('일반 대화',(root/'last-turn.json').read_text())
             speech.finish.assert_called_once()
             stt.close.assert_called_once()

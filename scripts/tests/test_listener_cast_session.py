@@ -105,6 +105,7 @@ class ListenerCastIntegrationTests(unittest.TestCase):
                 outputs.append(speech_root)
                 queue = MagicMock()
                 queue.first_playing = None
+                queue.events = []
                 queues.append(queue)
                 return queue
 

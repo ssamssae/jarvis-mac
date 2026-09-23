@@ -179,6 +179,8 @@ def main():
                        'speech_ended_wall':event['speech_ended_wall'],
                        'capture_ended_wall':event['capture_ended_wall'],
                        'endpoint_s':event['capture_ended_wall']-event['speech_ended_wall']}
+            speech = None
+            receipt['pipeline'] = {}
             try:
                 with contextlib.ExitStack() as cleanup:
                     cast = cast_session.connect(receipt)
@@ -188,7 +190,7 @@ def main():
                     active_speech = speech
                     cleanup.callback(finish_speech, speech)
                     # The listener only answers; device commands remain disabled.
-                    pipeline = run_turn(question, qa, speech, reviewed_facts=False)
+                    pipeline = run_turn(question, qa, speech, reviewed_facts=False, metrics=receipt['pipeline'])
                     receipt['pipeline'] = pipeline
                     if speech.first_playing is not None:
                         playing_wall = time.time()-(time.monotonic()-speech.first_playing)
@@ -204,8 +206,17 @@ def main():
                 receipt['error_type'] = type(exc).__name__
                 receipt['error_code'] = str(exc) if str(exc) in {
                     'cursor_keychain_locked', 'cursor_login_required', 'cursor_timeout',
-                    'existing_media_preserved', 'exact_cast_target_missing'} else 'turn_failed'
+                    'existing_media_preserved', 'exact_cast_target_missing',
+                    'cast_status_unavailable', 'cast_playback_timeout',
+                    'cast_receiver_status_unavailable', 'cast_media_status_unavailable'} else 'turn_failed'
             finally:
+                if speech is not None:
+                    receipt['pipeline']['speech'] = speech.events
+                    if speech.first_playing is not None:
+                        playing_wall = time.time()-(time.monotonic()-speech.first_playing)
+                        receipt['playing_wall'] = playing_wall
+                        receipt['speech_end_to_playing_s'] = playing_wall-event['speech_ended_wall']
+                        receipt['speech_start_to_playing_s'] = playing_wall-event['speech_started_wall']
                 cast_session.clear_audio()
                 active_speech = None
             receipt['finished_wall'] = time.time()
