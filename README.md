@@ -1,2 +1,157 @@
-# jarvis-mac
-Experimental macOS voice assistant: local wake gating, Cursor CLI answers, and Google Nest playback
+# Jarvis Mac · experimental
+
+**맥에 “자비스”라고 말하면, 로컬 음성 인식 → Cursor 답변 → Google Nest 재생으로 이어지는 작은 음성 비서입니다.**
+
+Swift 메뉴 막대 앱이 마이크를 관리하고, Python이 로컬 호출 판별·근거 조회·답변 생성·재생을 연결합니다. 공개 코드는 MIT입니다. Cursor·macOS·음성 모델 등 외부 구성요소는 별도입니다.
+
+```text
+Mac microphone → local whisper.cpp → “자비스” wake gate
+                                      ↓ qualified question only
+                               NASA evidence → Cursor CLI
+                                      ↓
+                            macOS say → Google Nest
+```
+
+현재는 **한국어 하늘/노을 질문을 위한 좁은 근거 기반 데모**입니다. 범용 검색 비서가 아닙니다. 근거가 없는 질문에는 답을 추측하지 않습니다. CLI에서는 질문과 정확히 연결된 외부 근거 JSON을 직접 줄 수 있습니다. 메뉴 앱에는 가전 제어 기능이 없습니다.
+
+## 먼저 준비할 것
+
+- macOS와 Xcode Command Line Tools (`xcode-select --install`), Python 3.11 이상.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp)의 `whisper-cli`와 한국어를 지원하는 모델 파일. 직접 설치·다운로드하고 해당 라이선스를 확인하세요. 모델이나 실행 파일은 이 저장소에 포함하지 않습니다.
+- [Cursor CLI](https://cursor.com/docs/cli/overview)에 본인 계정으로 로그인하고 모델을 선택해 둡니다. 기본 실행 파일은 `~/.local/bin/agent`입니다. 사용자 계정의 사용량·플랜·서비스 약관이 적용되며 무료 사용을 보장하지 않습니다.
+- 같은 신뢰할 수 있는 로컬 네트워크에 있는 Google Nest/Cast 스피커의 **정확한 기기 이름**. VPN·게스트 네트워크·방화벽은 검색/재생을 막을 수 있습니다.
+- macOS 한국어 `Yuna` 음성. `say -v '?'`에서 확인하고 없으면 시스템 설정에서 추가합니다.
+
+## 설치 및 사용
+
+Mac의 로그인된 GUI 세션에서 터미널을 열어 실행합니다. 아래 모델 경로와 스피커 이름은 본인 값으로 바꾸세요.
+
+```sh
+git clone https://github.com/ssamssae/jarvis-mac.git
+cd jarvis-mac
+python3 scripts/install-jarvis-mac-listener.py \
+  --cast-name 'My Nest Mini' \
+  --model "$HOME/models/ggml-small.bin" \
+  --whisper-cli /absolute/path/to/whisper-cli \
+  --start
+```
+
+`--cast-name`과 `--model`은 필수입니다. `--whisper-cli`를 생략하면 현재 PATH에서 찾습니다. 다른 Cursor 실행 파일은 `--cursor-binary /absolute/path/to/agent`로 지정합니다.
+
+설치기는 소스를 복사하고 전용 가상환경에 `pychromecast==14.0.9`를 설치한 뒤 네이티브 앱을 컴파일·로컬 서명합니다. 인터넷과 개발 도구가 필요합니다. `--start`를 주었을 때만 즉시 시작합니다. 생략하면 다음 GUI 로그인부터 실행됩니다. 다른 앱이나 서비스를 재시작하지 않습니다.
+
+처음 뜨는 **JarvisMacOSS 마이크 접근** 요청을 허용한 뒤 메뉴 막대가 “호출 대기”가 되면 말하세요.
+
+> 자비스, 하늘이 파란 이유를 한 문장으로 알려줘.
+
+“자비스”만 말한 뒤 질문할 수도 있습니다. 호출 인식 후 8초 동안 다음 발화를 받습니다. 인식·생성·재생 중에는 새 질문을 받지 않아 자기 답변을 다시 호출로 처리하는 것을 줄입니다. 메뉴에서 마이크 일시 정지/다시 듣기 또는 종료할 수 있습니다. 종료하면 같은 세션에서 자동으로 다시 켜지지 않습니다.
+
+설치 위치는 별도로 분리되어 있습니다.
+
+- 앱: `~/Applications/JarvisMacOSS.app`
+- 설정/상태: `~/Library/Application Support/JarvisMacOSS/`
+- 로그인 항목: `~/Library/LaunchAgents/com.ssamssae.jarvis-mac-oss.plist`
+
+업데이트 전에는 메뉴에서 앱을 종료한 후 설치기를 다시 실행합니다. 앱·설정·로그인 항목의 기존 파일은 전용 상태 폴더의 `backups/`에 보관합니다. 설치 인자가 새 설정의 기준이므로 모델·기기 이름을 다시 지정하세요.
+
+로그인 실행만 해제하려면 메뉴에서 종료한 뒤 다음을 실행합니다. 현재 사용자에게 설치한 이 앱의 항목만 대상으로 합니다.
+
+```sh
+launchctl bootout "gui/$(id -u)/com.ssamssae.jarvis-mac-oss"
+rm "$HOME/Library/LaunchAgents/com.ssamssae.jarvis-mac-oss.plist"
+```
+
+완전히 제거할 때는 종료 후 위 앱과 상태 폴더도 직접 삭제합니다. 상태 폴더에는 최신 질문/답변 기록과 설치 백업이 포함됩니다.
+
+## 텍스트 / WAV로 먼저 시험하기
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python scripts/jarvis_mac_voice.py \
+  --text '하늘이 파란 이유를 한 문장으로 알려줘' \
+  --cast-name 'My Nest Mini' --play
+```
+
+`--play`가 없으면 음성 파일 합성까지만 실행하고 임시 파일을 정리합니다. `--wav question.wav --model /path/model.bin --whisper-cli /path/whisper-cli`로 로컬 인식을 포함할 수 있습니다. WAV는 16 kHz, 모노, 16-bit PCM이어야 합니다.
+
+`--evidence evidence.json`은 아래 형식이며 `question`은 질문 전체와 일치해야 합니다. 근거의 신뢰성과 이용 권한은 제공자가 확인해야 합니다. 도구 실행을 요청하는 근거 텍스트를 사용하지 마세요.
+
+```json
+{"question":"예시 질문", "sources":[{"url":"https://example.org/source", "text":"질문에 답하는 신뢰할 수 있는 근거"}]}
+```
+
+Cursor는 기존 선택 모델을 그대로 사용하고 별도 임시 설정·작업공간에서 `ask` 모드로 실행합니다. 도구 권한은 거부하고 기존 대화나 설정 파일을 바꾸지 않습니다. 별도 API 키를 입력받지 않으며 환경의 Cursor API 키도 전달하지 않습니다. CLI나 서비스 버전이 바뀌면 권한/출력 형식을 재검증해야 합니다. 운영체제 보안 샌드박스를 제공하는 프로젝트는 아닙니다.
+
+## 개인정보와 동작 범위
+
+- 마이크에서 잡힌 발화는 **로컬에서 먼저 인식**합니다. 호출에 해당하지 않는 인식 텍스트는 답변 서비스에 보내거나 기록하지 않습니다. 호출을 포함한 질문 텍스트와 조회 근거만 Cursor로 보냅니다. NASA 조회는 해당 사이트로 나갑니다.
+- 발화 WAV는 임시로 디스크에 저장했다가 인식 후 삭제합니다. 비정상 강제 종료는 임시 파일을 남길 수 있습니다. 최신 호출 질문·답변·측정치는 `last-turn.json`에 덮어쓰며, 상태 파일은 로컬 전용 권한으로 저장합니다. 이 폴더를 공개하거나 동기화하지 마세요.
+- 마이크 일시 정지는 캡처를 멈춥니다. 이미 처리 중인 질문은 끝날 수 있습니다. 앱 종료는 소유한 처리·합성·재생을 정리합니다.
+- Nest에 들려줄 답변 WAV는 재생 중 임시 **암호화되지 않은 LAN HTTP** 서버로 전달합니다. 신뢰할 수 있는 네트워크에서 사용하세요. 오디오를 인터넷에 공개하는 기능은 없습니다.
+- 이미 다른 미디어가 재생/일시 정지/버퍼링 중인 스피커는 덮어쓰지 않습니다. 지정한 이름의 기기만 사용하며 다른 스피커로 자동 대체하지 않습니다.
+- 호출어는 사용자 인증이 아닙니다. 주변 사람·TV 음성·오인식도 호출할 수 있습니다. 단일 사용자 실험용이며 화자 인증, 끼어들기, 동시 질문, 범용 가전 제어는 제공하지 않습니다.
+
+## 성능과 검증 범위
+
+원형 구현은 실제 마이크 질문 → Cursor → Nest의 **1회 실제 청취**를 확인했습니다. 말 끝부터 재생까지 **39.07초**, 이 중 답변 생성 **21.88초**, Nest 연결 **13.47초**였습니다. 이는 속도 개선을 보여 주는 수치가 아닙니다.
+
+**그 측정은 별도의 Ipta warm STT helper를 사용한 비공개 환경의 단일 표본입니다. 공개판은 매 발화마다 `whisper-cli`를 시작하므로 같은 성능을 보장하지 않습니다.** 공개판의 기본 어댑터를 이용한 실제 마이크→Nest 전체 경로는 아직 실측하지 않았습니다. 공개 어댑터는 실제 로컬 whisper-cli와 사용자 제공 모델로 합성 WAV의 인식 성공도 확인했습니다. 이것은 마이크/스피커 전체 실측이 아닙니다. 가짜 실행 파일을 이용한 JSON 프로토콜·오류·종료 테스트 및 네이티브 컴파일도 별도로 확인했습니다. [측정 범위와 집계](docs/benchmark.json)를 참고하세요.
+
+모델, 하드웨어, 선택한 Cursor 모델/서비스 상태, 네트워크에 따라 지연이 크게 달라집니다. Cursor 토큰 스트리밍이나 모델 사전 준비는 사용하지 않습니다. 첫 답변 전체를 받은 뒤 음성을 합성합니다.
+
+## 외부 로컬 STT worker 연결
+
+`--stt-worker /absolute/path/to/worker --model /path/to/model`을 설치기에 넘기면 기본 whisper.cpp 어댑터 대신 호환 실행 파일을 사용합니다. 실행 시 모델 경로를 하나의 인자로 받으며 다음 JSON-lines 계약을 따릅니다.
+
+```text
+stdout: {"ready":true}
+stdin:  {"wav":"/absolute/path/question.wav"}
+stdout: {"text":"자비스, 하늘이 파란 이유"}
+```
+
+진단은 stderr, 프로토콜만 stdout에 출력해야 합니다. 오류는 `{"error":"short_code"}`로 반환합니다. 로컬 인식과 개인정보 보호는 사용자가 연결한 worker 구현에도 달려 있습니다. 외부 worker·모델은 이 저장소에 포함하지 않습니다.
+
+## 문제 해결
+
+- `cursor_keychain_locked`: SSH와 로그인된 GUI 터미널의 키체인 접근이 다를 수 있습니다. Mac의 키체인 접근 앱에서 `login` 키체인을 본인이 잠금 해제하고 GUI 터미널에서 Cursor를 확인하세요. 암호를 명령행·로그·이슈에 붙여 넣지 말고 키체인 우회 설정을 사용하지 마세요.
+- `cursor_login_required` / `cursor_selected_model_missing`: 같은 Mac 사용자 계정의 Cursor CLI에서 로그인 및 모델 선택을 먼저 완료하세요.
+- 마이크 권한 필요: 시스템 설정 → 개인정보 보호 및 보안 → 마이크에서 JarvisMacOSS를 확인하세요. 원격 터미널에서 앱을 직접 실행하지 말고 로그인된 Mac 세션에서 설치/실행하세요.
+- `exact_cast_target_missing`: 기기 이름과 같은 LAN인지 확인하세요. 중복 이름은 피하세요.
+- `existing_media_preserved`: Nest의 기존 미디어를 본인이 종료한 후 다시 호출하세요.
+- 로컬 인식 실패: whisper-cli 경로, 모델 호환성, 한국어 지원, WAV 형식을 확인하세요. 기본 어댑터는 실패 시 원시 진단 내용을 답변으로 읽지 않습니다.
+
+## 개발 / 라이선스
+
+```sh
+python3 -m unittest discover -s scripts/tests -q
+xcrun swiftc -swift-version 5 scripts/native/jarvis_mac_listener.swift -o /tmp/JarvisMacOSS
+```
+
+테스트는 계정, 모델 다운로드, 마이크, Nest 없이 실행됩니다. CI는 Python 테스트와 Swift 컴파일을 확인하며 실제 하드웨어 시험을 대신하지 않습니다.
+
+[MIT LICENSE](LICENSE) · [외부 구성요소 안내](THIRD_PARTY_NOTICES.md)
+
+## English quick start
+
+Experimental macOS menu-bar voice assistant: local whisper.cpp transcription and
+wake-prefix gating, grounded Cursor CLI answers, macOS speech synthesis, and
+Google Nest playback. Korean sky/sunset questions are the built-in demonstration;
+unsupported questions abstain. This is not a general web-search assistant.
+
+Install Python 3.11+, Xcode Command Line Tools, your own whisper.cpp executable and
+multilingual model, and Cursor CLI with your own login and selected model. Run the
+installer above with your exact `--cast-name`, `--model`, and `--whisper-cli` paths;
+add `--start` to start immediately. Grant microphone access to **JarvisMacOSS**.
+Say “자비스, 하늘이 파란 이유를 한 문장으로 알려줘.” Pause or quit from the menu bar.
+
+The OSS app has its own bundle, state directory and login item. Ambient speech is
+transcribed locally; wake-qualified question text and evidence reach Cursor.
+Latest question/answer metrics stay in local `last-turn.json`. Reply audio is
+served temporarily over unencrypted LAN HTTP. Wake words are not authentication.
+
+The 39.07-second prototype result used a different warm STT worker. The public
+adapter starts whisper-cli per utterance and has **not** completed a hardware
+end-to-end benchmark. Unit tests and compilation are not microphone/hearing proof.
+Cursor usage is subject to your own account and terms; it is not bundled or made
+free by this project. MIT covers only this repository's original code.

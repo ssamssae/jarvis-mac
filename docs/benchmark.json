@@ -1,0 +1,25 @@
+{
+  "prototype": {
+    "sample_count": 1,
+    "input": "actual microphone utterance",
+    "stt": "separate Ipta warm worker, not bundled",
+    "speech_end_to_nest_playing_s": 39.07,
+    "cursor_generation_s": 21.88,
+    "nest_connection_s": 13.47,
+    "speaker_finished": true,
+    "user_confirmed_heard_once": true
+  },
+  "public_adapter_validation": {
+    "input": "synthetic 16 kHz mono PCM16 WAV",
+    "adapter": "whisper_cpp_worker.py",
+    "engine": "user-supplied whisper-cli and model",
+    "protocol_ready_and_text": true,
+    "exit_code": 0,
+    "hardware_end_to_end_measured": false
+  },
+  "limitations": [
+    "Single prototype observation; not a performance guarantee",
+    "Public adapter starts whisper-cli per utterance; prototype used a different warm worker",
+    "No private identities, exact utterance timestamps, device names, paths, audio or credentials included"
+  ]
+}

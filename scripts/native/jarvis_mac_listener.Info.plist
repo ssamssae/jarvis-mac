@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.ssamssae.jarvis-mac-oss</string>
+    <key>CFBundleName</key><string>Jarvis Mac</string>
+    <key>CFBundleDisplayName</key><string>Jarvis Mac</string>
+    <key>CFBundleExecutable</key><string>JarvisMacOSS</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSUIElement</key><true/>
+    <key>LSMultipleInstancesProhibited</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>같은 네트워크의 Google Nest 스피커를 찾아 자비스 답변을 재생합니다.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>자비스 호출과 질문을 듣기 위해 마이크를 사용합니다. 음성 인식은 이 Mac에서 처리합니다.</string>
+</dict>
+</plist>
