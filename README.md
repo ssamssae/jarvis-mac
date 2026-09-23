@@ -40,7 +40,7 @@ python3 scripts/install-jarvis-mac-listener.py \
 
 설치기는 소스를 복사하고 전용 가상환경에 `pychromecast==14.0.9`를 설치한 뒤 네이티브 앱을 컴파일·로컬 서명합니다. 인터넷과 개발 도구가 필요합니다. `--start`를 주었을 때만 즉시 시작합니다. 생략하면 다음 GUI 로그인부터 실행됩니다. 다른 앱이나 서비스를 재시작하지 않습니다.
 
-처음 뜨는 **JarvisMacOSS 마이크 접근** 요청을 허용한 뒤 메뉴 막대가 “호출 대기”가 되면 말하세요.
+처음 뜨는 **JarvisMacOSS 마이크 접근** 요청을 허용한 뒤 메뉴 막대가 “호출 대기”가 되면 말하세요. 앱 시작 때 Nest 연결을 준비하고 질문 사이에 재사용하므로 최초 준비에는 시간이 걸릴 수 있습니다. 연결이 끊기거나 질문 처리가 실패하면 다음 질문에서 다시 연결하며, 실패한 답변을 자동으로 재생하지 않습니다.
 
 > 자비스, 하늘이 파란 이유를 한 문장으로 알려줘.
 
@@ -88,7 +88,7 @@ Cursor는 기존 선택 모델을 그대로 사용하고 별도 임시 설정·�
 - 마이크에서 잡힌 발화는 **로컬에서 먼저 인식**합니다. 호출에 해당하지 않는 인식 텍스트는 답변 서비스에 보내거나 기록하지 않습니다. 호출을 포함한 질문 텍스트와 조회 근거만 Cursor로 보냅니다. NASA 조회는 해당 사이트로 나갑니다.
 - 발화 WAV는 임시로 디스크에 저장했다가 인식 후 삭제합니다. 비정상 강제 종료는 임시 파일을 남길 수 있습니다. 최신 호출 질문·답변·측정치는 `last-turn.json`에 덮어쓰며, 상태 파일은 로컬 전용 권한으로 저장합니다. 이 폴더를 공개하거나 동기화하지 마세요.
 - 마이크 일시 정지는 캡처를 멈춥니다. 이미 처리 중인 질문은 끝날 수 있습니다. 앱 종료는 소유한 처리·합성·재생을 정리합니다.
-- Nest에 들려줄 답변 WAV는 재생 중 임시 **암호화되지 않은 LAN HTTP** 서버로 전달합니다. 신뢰할 수 있는 네트워크에서 사용하세요. 오디오를 인터넷에 공개하는 기능은 없습니다.
+- Nest에 들려줄 답변 WAV는 전용 임시 폴더의 **암호화되지 않은 LAN HTTP** 서버로 전달합니다. 연결과 서버는 앱이 유지하고 음성 파일은 각 답변 처리 후 삭제합니다. 신뢰할 수 있는 네트워크에서 사용하세요. 오디오를 인터넷에 공개하는 기능은 없습니다.
 - 이미 다른 미디어가 재생/일시 정지/버퍼링 중인 스피커는 덮어쓰지 않습니다. 지정한 이름의 기기만 사용하며 다른 스피커로 자동 대체하지 않습니다.
 - 호출어는 사용자 인증이 아닙니다. 주변 사람·TV 음성·오인식도 호출할 수 있습니다. 단일 사용자 실험용이며 화자 인증, 끼어들기, 동시 질문, 범용 가전 제어는 제공하지 않습니다.
 
@@ -96,9 +96,13 @@ Cursor는 기존 선택 모델을 그대로 사용하고 별도 임시 설정·�
 
 원형 구현은 실제 마이크 질문 → Cursor → Nest의 **1회 실제 청취**를 확인했습니다. 말 끝부터 재생까지 **39.07초**, 이 중 답변 생성 **21.88초**, Nest 연결 **13.47초**였습니다. 이는 속도 개선을 보여 주는 수치가 아닙니다.
 
-**그 측정은 별도의 Ipta warm STT helper를 사용한 비공개 환경의 단일 표본입니다. 공개판은 매 발화마다 `whisper-cli`를 시작하므로 같은 성능을 보장하지 않습니다.** 공개판의 기본 어댑터를 이용한 실제 마이크→Nest 전체 경로는 아직 실측하지 않았습니다. 공개 어댑터는 실제 로컬 whisper-cli와 사용자 제공 모델로 합성 WAV의 인식 성공도 확인했습니다. 이것은 마이크/스피커 전체 실측이 아닙니다. 가짜 실행 파일을 이용한 JSON 프로토콜·오류·종료 테스트 및 네이티브 컴파일도 별도로 확인했습니다. [측정 범위와 집계](docs/benchmark.json)를 참고하세요.
+연결 재사용을 적용한 **공개판의 기본 `whisper-cli` 어댑터로 실제 마이크 → Cursor → Nest 재생 및 정상 종료를 확인했고, 사용자가 답변을 한 번 들었다고 확인했습니다.** 같은 질문의 말 끝부터 재생까지 **26.15초**로, 앞선 원형 표본보다 **12.92초(약 33%)** 짧았습니다. 질문 중 Nest 연결은 재사용으로 **0초**, Cursor 생성은 **20.40초**, 음성 인식은 **0.69초**였습니다.
 
-모델, 하드웨어, 선택한 Cursor 모델/서비스 상태, 네트워크에 따라 지연이 크게 달라집니다. Cursor 토큰 스트리밍이나 모델 사전 준비는 사용하지 않습니다. 첫 답변 전체를 받은 뒤 음성을 합성합니다.
+앱 시작 때 연결 준비는 별도입니다. 첫 시작에서 **12.83초**, 정상 실측 직전 재시작에서는 **0.60초**가 걸렸습니다. 최초 시험에서는 답변은 한 번 들렸지만 종료 확인에 시간 초과가 발생하여, 순간적인 Nest 종료 알림을 소유한 재생 세션과 대조해 보관하도록 수정한 뒤 정상 종료를 재검증했습니다.
+
+**각 수치는 성공한 공개판 1회와 이전 원형 1회의 관측 비교이며 반복 통제 실험이 아닙니다.** 원형은 별도의 Ipta warm STT helper를 사용했고 공개판은 매 발화마다 `whisper-cli`를 시작합니다. Cursor 선택 모델은 같지만 서비스·네트워크 변동이 있으므로 같은 지연을 보장하지 않습니다. JSON 프로토콜·오류·종료 회귀검사와 네이티브 컴파일도 별도로 통과했습니다. [측정 범위와 집계](docs/benchmark.json)를 참고하세요.
+
+모델, 하드웨어, 선택한 Cursor 모델/서비스 상태, 네트워크에 따라 지연이 크게 달라집니다. Cursor의 부분 출력은 초기화·첫 글자·최종 결과·프로세스 종료의 도착 시간 계측에만 사용합니다. 최종 성공과 정상 종료를 확인한 뒤 답변 전체를 음성으로 합성하므로 미완성 답변이나 중복 출력은 읽지 않습니다. Cursor 모델 사전 준비는 사용하지 않습니다. `last-turn.json`에는 질문 중 연결 시간과 별도로 앱 시작 때의 `startup_prepare_s`, 연결 재사용 여부, Cursor 구간별 시간이 기록됩니다.
 
 ## 외부 로컬 STT worker 연결
 
@@ -150,8 +154,10 @@ transcribed locally; wake-qualified question text and evidence reach Cursor.
 Latest question/answer metrics stay in local `last-turn.json`. Reply audio is
 served temporarily over unencrypted LAN HTTP. Wake words are not authentication.
 
-The 39.07-second prototype result used a different warm STT worker. The public
-adapter starts whisper-cli per utterance and has **not** completed a hardware
-end-to-end benchmark. Unit tests and compilation are not microphone/hearing proof.
+The public adapter completed a real microphone → Cursor → Nest trial in **26.15 seconds**
+from speech end to playback, with receiver completion and one user-confirmed playback.
+The earlier prototype took 39.07 seconds with a different warm STT worker. These are
+single observations, not a controlled repeated benchmark. Nest startup preparation
+is reported separately; the selected Cursor model was unchanged. See the benchmark JSON.
 Cursor usage is subject to your own account and terms; it is not bundled or made
 free by this project. MIT covers only this repository's original code.

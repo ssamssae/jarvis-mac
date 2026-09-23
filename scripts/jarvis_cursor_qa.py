@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import selectors
 import signal
 import subprocess
 import tempfile
@@ -19,7 +20,7 @@ INSTRUCTIONS = """한국어 음성 비서입니다. 다음 질문에 제공된 �
 
 def cursor_command(binary, workspace):
     # No --model, --resume, --api-key, --force or changes to an existing chat.
-    return [str(binary), "-p", "--mode", "ask", "--output-format", "json",
+    return [str(binary), "-p", "--mode", "ask", "--output-format", "stream-json", "--stream-partial-output",
             "--workspace", str(workspace), "--trust"]
 
 
@@ -85,13 +86,8 @@ class CursorQA:
             try:
                 self.process = subprocess.Popen(cursor_command(self.binary, workspace),
                     cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE, text=True, start_new_session=True)
-                try:
-                    stdout, stderr = self.process.communicate(INSTRUCTIONS + "\n" + prompt, timeout=self.timeout)
-                except subprocess.TimeoutExpired:
-                    self.close(); raise TimeoutError("cursor_timeout") from None
-                if len(stdout) + len(stderr) > 1000000: raise RuntimeError("cursor_output_too_large")
-                result = parse_result(self.process.returncode, stdout, stderr)
+                    stderr=subprocess.PIPE, start_new_session=True)
+                result = collect_stream(self.process, INSTRUCTIONS + "\n" + prompt, start, self.timeout)
                 result["elapsed_s"] = time.monotonic() - start
             finally:
                 self.close()
@@ -116,3 +112,80 @@ class CursorQA:
             process.kill(); process.wait(timeout=3)
         for pipe in (process.stdin, process.stdout, process.stderr):
             if pipe: pipe.close()
+
+
+def collect_stream(process, prompt, start, timeout):
+    """Observe local arrival times; expose only the successful terminal answer.
+
+    Deltas are never yielded, persisted, or spoken. Timestamp/model-call markers
+    distinguish new deltas from Cursor's duplicate buffered and final flushes.
+    """
+    deadline = start + timeout
+    pending = memoryview(prompt.encode())
+    stdout = bytearray(); stderr = bytearray(); line_buffer = bytearray()
+    terminal = None; malformed = False; result_count = 0
+    timings = {"init_s": None, "first_delta_s": None, "result_s": None}
+
+    def event_line(line):
+        nonlocal terminal, malformed, result_count
+        if not line.strip(): return
+        try: event = json.loads(line)
+        except (ValueError, UnicodeError):
+            malformed = True; return
+        if not isinstance(event, dict):
+            malformed = True; return
+        elapsed = time.monotonic() - start
+        if event.get("type") == "system" and event.get("subtype") == "init" and timings["init_s"] is None:
+            timings["init_s"] = elapsed
+        if (event.get("type") == "assistant" and "timestamp_ms" in event
+                and "model_call_id" not in event and timings["first_delta_s"] is None):
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list) and any(isinstance(part, dict) and part.get("type") == "text"
+                    and isinstance(part.get("text"), str) and part["text"] for part in content):
+                timings["first_delta_s"] = elapsed
+        if event.get("type") == "result":
+            result_count += 1; terminal = event; timings["result_s"] = elapsed
+
+    with selectors.DefaultSelector() as selector:
+        for pipe in (process.stdin, process.stdout, process.stderr): os.set_blocking(pipe.fileno(), False)
+        selector.register(process.stdin, selectors.EVENT_WRITE)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        selector.register(process.stderr, selectors.EVENT_READ)
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise TimeoutError("cursor_timeout")
+            for key, _ in selector.select(remaining):
+                pipe = key.fileobj
+                if pipe is process.stdin:
+                    try: pending = pending[os.write(pipe.fileno(), pending):]
+                    except BlockingIOError: continue
+                    except BrokenPipeError: pending = pending[:0]
+                    if not pending:
+                        selector.unregister(pipe); pipe.close()
+                    continue
+                try: block = os.read(pipe.fileno(), 65536)
+                except BlockingIOError: continue
+                if not block:
+                    selector.unregister(pipe)
+                    if pipe is process.stdout and line_buffer:
+                        event_line(bytes(line_buffer)); line_buffer.clear()
+                    continue
+                destination = stdout if pipe is process.stdout else stderr
+                destination.extend(block)
+                if len(stdout) + len(stderr) > 1000000: raise RuntimeError("cursor_output_too_large")
+                if pipe is process.stdout:
+                    line_buffer.extend(block)
+                    while b"\n" in line_buffer:
+                        line, _, rest = line_buffer.partition(b"\n")
+                        line_buffer[:] = rest; event_line(line)
+    try: process.wait(timeout=max(0, deadline-time.monotonic()))
+    except subprocess.TimeoutExpired: raise TimeoutError("cursor_timeout") from None
+    timings["process_exit_s"] = time.monotonic() - start
+    if process.returncode:
+        return parse_result(process.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace"))
+    if malformed: raise RuntimeError("cursor_invalid_json")
+    if result_count != 1: raise RuntimeError("cursor_no_success_result")
+    result = parse_result(0, json.dumps(terminal), "")
+    result["timings"] = timings
+    return result

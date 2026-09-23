@@ -84,6 +84,22 @@ class VoiceTests(unittest.TestCase):
             m.run_turn('질문',QA(),Speech(),prewarm=False,
                        evidence={'question':'질문','sources':[{'url':'https://example.org','text':'근거'}]})
 
+    def test_playback_failure_keeps_generation_measurements(self):
+        class QA:
+            def ask(self, *args, **kwargs):
+                yield {'done':True, 'answer':'답변입니다.', 'backend':'cursor',
+                       'timings':{'result_s':1.5}}
+        class Speech:
+            def submit(self, text): pass
+            def finish(self): raise TimeoutError('cast_status_unavailable')
+        metrics={}
+        with self.assertRaises(TimeoutError):
+            m.run_turn('질문',QA(),Speech(),metrics=metrics,
+                       evidence={'question':'질문','sources':[{'url':'https://example.org','text':'근거'}]})
+        self.assertEqual(metrics['answer'], '답변입니다.')
+        self.assertEqual(metrics['generation_timings']['result_s'], 1.5)
+        self.assertIn('generation_s', metrics)
+
     def test_json_worker_handles_batched_lines_and_eof(self):
         worker=m.JSONWorker([sys.executable,'-u','-c','print(\'{"ready":true}\\n{"done":true}\')'])
         try:
@@ -111,23 +127,129 @@ class VoiceTests(unittest.TestCase):
         result=m.run_turn('질문',QA(),Speech(),evidence={'question':'질문','sources':[{'url':'https://example.org','text':'근거'}]})
         self.assertEqual(spoken,['첫 문장입니다.','둘째 문장입니다.'])
 
-    def test_cast_does_not_accept_previous_clip_status(self):
+    def raw_cast(self, applications=None, media=None):
         from types import SimpleNamespace as N
+        calls=[]
+        app={'appId':'CC1AD845','sessionId':'owned-session','transportId':'transport',
+             'namespaces':[{'name':'urn:x-cast:com.google.cast.media'}]}
+        apps=[app] if applications is None else applications
+        def receiver_status(**kw):
+            calls.append('receiver_query')
+            kw['callback_function'](True, {'type':'RECEIVER_STATUS','status':{'applications':apps}})
+        def media_status(message, **kw):
+            calls.append('media_query')
+            kw['callback_function'](True, {'type':'MEDIA_STATUS','status':[] if media is None else [media]})
+        def forbidden(*a,**kw): raise AssertionError('auto-launching/cached API must not be used')
+        controller=N(update_status=forbidden,send_message_nocheck=media_status,play_media=lambda *a,**k:None,
+                     status=N(content_id='http://ours/voice.wav',player_state='PLAYING'))
+        receiver=N(update_status=receiver_status,send_message=lambda data:calls.append(data))
+        cast=object.__new__(m.CastOutput)
+        cast.target=N(socket_client=N(receiver_controller=receiver),media_controller=controller,
+                      quit_app=forbidden,disconnect=lambda:calls.append('disconnect'))
+        cast.owned_urls={'http://ours/voice.wav'};cast.owned_session=('owned-session','transport')
+        cast.media_events=m.deque(maxlen=64);cast.lock=m.threading.Lock()
+        cast.cleanup_errors=[];cast.server=None;cast.browser=None
+        cast.api=N(discovery=N(stop_discovery=lambda b:calls.append('discovery')))
+        return cast,calls
+
+    def test_cast_does_not_accept_previous_clip_status(self):
         url='http://host/clip.wav'
-        statuses=[N(content_id='old',player_state='IDLE',idle_reason=None,title=None),
-                  N(content_id='old',player_state='PLAYING',idle_reason=None),
-                  N(content_id=url,player_state='PLAYING',idle_reason=None),
-                  N(content_id=url,player_state='IDLE',idle_reason='FINISHED')]
-        class Controller:
-            status=N(player_state='IDLE',title=None)
-            def play_media(self,*a,**k): pass
-            def update_status(self): self.status=statuses.pop(0)
-        cast=object.__new__(m.CastOutput);cast.cancelled=m.threading.Event();cast.target=N(media_controller=Controller())
-        cast.owned_urls=set();cast.base='http://host';cast.started={'/clip.wav':1};cast.lock=__import__('threading').Lock()
+        statuses=[{'media':{'contentId':'old'},'playerState':'IDLE'},
+                  {'media':{'contentId':'old'},'playerState':'PLAYING'},
+                  {'media':{'contentId':url},'playerState':'PLAYING','mediaSessionId':42},
+                  {'media':{'contentId':url},'playerState':'IDLE','idleReason':'FINISHED','mediaSessionId':42}]
+        cast,calls=self.raw_cast()
+        cast.refresh_status=lambda **kw:dict(media=statuses.pop(0),session_id='owned-session',transport_id='transport')
+        cast.cancelled=m.threading.Event();cast.owned_urls=set();cast.base='http://host'
+        cast.started={'/clip.wav':1};cast.lock=m.threading.Lock()
         started=[]
-        with patch.object(m.time,'sleep'):
-            result=cast.play('/tmp/clip.wav',started.append)
+        with patch.object(m.time,'sleep'):result=cast.play('/tmp/clip.wav',started.append)
         self.assertTrue(result['finished']);self.assertEqual(len(started),1);self.assertEqual(statuses,[])
+        self.assertEqual(cast.started, {});self.assertEqual(cast.owned_urls, {url})
+
+    def observer_playback(self, terminal_session=42, terminal_transport='transport', fail_after=False):
+        cast,calls=self.raw_cast()
+        cast.cancelled=m.threading.Event();cast.owned_urls=set();cast.base='http://host'
+        cast.started={'/clip.wav':1}
+        def load(url,*args,**kwargs):
+            cast.record_media_status('transport', {'type':'MEDIA_STATUS','status':[
+                {'media':{'contentId':url},'playerState':'PLAYING','mediaSessionId':42}]})
+            cast.record_media_status(terminal_transport, {'type':'MEDIA_STATUS','status':[
+                {'playerState':'IDLE','idleReason':'FINISHED','mediaSessionId':terminal_session}]})
+            if fail_after:
+                cast.record_media_status('transport', {'type':'MEDIA_STATUS','status':[
+                    {'playerState':'IDLE','idleReason':'INTERRUPTED','mediaSessionId':42}]})
+        cast.target.media_controller.play_media=load
+        return cast,calls
+
+    def test_raw_finished_without_content_is_retained_after_empty_get_status(self):
+        cast,calls=self.observer_playback()
+        started=[]
+        result=cast.play('/tmp/clip.wav',started.append)
+        self.assertTrue(result['finished']);self.assertEqual(len(started),1)
+        # Only preflight queries media: pushed FINISHED is not lost to a later
+        # empty or non-responsive GET_STATUS while the app remains connected.
+        self.assertEqual(calls.count('media_query'),1)
+
+    def test_wrong_finished_session_or_transport_is_not_accepted(self):
+        for sid,transport in [(99,'transport'),(42,'other-transport'),(None,'transport')]:
+            cast,_=self.observer_playback(sid,transport,fail_after=True)
+            with self.assertRaisesRegex(RuntimeError,'cast_playback_interrupted'):
+                cast.play('/tmp/clip.wav',lambda at:None)
+
+    def test_raw_observer_is_bounded_and_unregistered_on_close(self):
+        cast,calls=self.raw_cast()
+        for n in range(100):cast.record_media_status('transport',{'type':'MEDIA_STATUS','status':[{'mediaSessionId':n}]})
+        self.assertEqual(len(cast.media_events),64)
+        observer=object();cast.media_observer=observer
+        cast.target.unregister_handler=lambda obj:calls.append(('unregister',obj))
+        cast.close()
+        self.assertIn(('unregister',observer),calls)
+        self.assertIsNone(cast.media_observer)
+
+    def test_cast_fresh_status_timeout_prevents_play(self):
+        cast,_=self.raw_cast()
+        cast.target.socket_client.receiver_controller.update_status=lambda **kw:None
+        with self.assertRaisesRegex(TimeoutError, 'cast_receiver_status_unavailable'):cast.refresh_status(timeout=.001)
+
+    def test_cast_rejected_status_prevents_play(self):
+        cast,_=self.raw_cast()
+        cast.target.socket_client.receiver_controller.update_status=lambda **kw:kw['callback_function'](False,None)
+        with self.assertRaisesRegex(TimeoutError, 'cast_receiver_status_unavailable'):cast.refresh_status(timeout=.001)
+
+    def test_idle_receiver_query_never_launches_or_queries_media(self):
+        for apps in [[],[{'appId':'E8C28D3C'}]]:
+            cast,calls=self.raw_cast(applications=apps)
+            self.assertEqual(cast.refresh_status()['media'],{})
+            self.assertEqual(calls,['receiver_query'])
+
+    def test_unknown_app_preserved_without_media_query_or_stop(self):
+        for apps in [[{'appId':'OTHER'}],[{'appId':'CC1AD845','sessionId':'other','transportId':'t','namespaces':[]}]]:
+            cast,calls=self.raw_cast(applications=apps)
+            with self.assertRaisesRegex(RuntimeError,'existing_media_preserved'):cast.refresh_status()
+            cast.close()
+            self.assertNotIn('media_query',calls)
+            self.assertFalse(any(isinstance(c,dict) for c in calls))
+            self.assertIn('disconnect',calls)
+
+    def test_empty_fresh_media_does_not_inherit_cached_ownership(self):
+        cast,calls=self.raw_cast(media=None)
+        self.assertEqual(cast.refresh_status()['media'],{})
+        cast.close()
+        self.assertFalse(any(isinstance(c,dict) for c in calls))
+        self.assertIn('disconnect',calls)
+
+    def test_cleanup_stop_targets_only_fresh_owned_session(self):
+        cast,calls=self.raw_cast(media={'media':{'contentId':'http://ours/voice.wav'},'playerState':'IDLE'})
+        cast.close()
+        self.assertIn({'type':'STOP','sessionId':'owned-session'},calls)
+        self.assertIn('disconnect',calls)
+
+    def test_changed_session_same_url_does_not_stop(self):
+        cast,calls=self.raw_cast(media={'media':{'contentId':'http://ours/voice.wav'},'playerState':'PLAYING'})
+        cast.owned_session=('previous-session','transport')
+        cast.close()
+        self.assertFalse(any(isinstance(c,dict) for c in calls))
 
     def test_missing_named_cast_never_falls_back_to_other_speaker(self):
         from types import SimpleNamespace as N
@@ -170,27 +292,20 @@ class VoiceTests(unittest.TestCase):
         worker=m.LazyWorker(['/does/not/exist']);worker.close();self.assertIsNone(worker.worker)
 
     def test_same_title_other_content_is_not_owned(self):
-        from types import SimpleNamespace as N
-        calls=[]
-        controller=N(status=N(content_id='http://other/voice.wav',player_state='PLAYING',title='Jarvis Mac voice'),
-                     update_status=lambda:None)
-        cast=object.__new__(m.CastOutput);cast.target=N(media_controller=controller,quit_app=lambda:calls.append('quit'),disconnect=lambda:calls.append('disconnect'))
-        cast.owned_urls={'http://ours/voice.wav'};cast.cleanup_errors=[];cast.server=None;cast.browser=None
-        cast.api=N(discovery=N(stop_discovery=lambda b:calls.append('discovery')))
+        cast,calls=self.raw_cast(media={'media':{'contentId':'http://other/voice.wav','metadata':{'title':'Jarvis Mac voice'}},'playerState':'PLAYING'})
         with self.assertRaisesRegex(RuntimeError,'existing_media_preserved'):cast.play('/tmp/test.wav',lambda at:None)
-        cast.close();self.assertNotIn('quit',calls);self.assertIn('disconnect',calls)
+        cast.close()
+        self.assertFalse(any(isinstance(c,dict) for c in calls));self.assertIn('disconnect',calls)
 
     def test_cleanup_continues_after_device_errors(self):
         from types import SimpleNamespace as N
-        calls=[]
-        def failed():raise OSError('network unavailable')
-        cast=object.__new__(m.CastOutput)
-        cast.owned_urls={'http://ours/voice.wav'};cast.cleanup_errors=[];cast.browser=None
-        cast.target=N(media_controller=N(status=N(content_id='http://ours/voice.wav')),quit_app=failed,disconnect=failed)
-        cast.api=N(discovery=N(stop_discovery=lambda b:calls.append('discovery')))
+        cast,calls=self.raw_cast(media={'media':{'contentId':'http://ours/voice.wav'}})
+        def failed(*a,**kw):raise OSError('network unavailable')
+        cast.target.socket_client.receiver_controller.update_status=failed
+        cast.target.disconnect=failed
         cast.server=N(shutdown=lambda:calls.append('shutdown'),server_close=lambda:calls.append('close'))
         with patch.object(sys,'stderr',__import__('io').StringIO()):cast.close()
-        self.assertEqual(calls,['discovery','shutdown','close']);self.assertEqual(len(cast.cleanup_errors),2)
+        self.assertEqual(calls,['discovery','shutdown','close']);self.assertEqual(len(cast.cleanup_errors),1)
 
 
 if __name__ == '__main__': unittest.main()
