@@ -171,6 +171,32 @@ def main():
             kind, question = gate.accept(text, time.monotonic())
             if kind != 'question':
                 # Ambient speech and recognition text are never persisted or sent to QA.
+                if kind == 'armed':
+                    state('speaking', False)
+                    wake_receipt = {'input_kind':'wake_only', 'stt_s':stt_s,
+                                    'capture_ended_wall':event['capture_ended_wall']}
+                    cue = None
+                    try:
+                        cast = cast_session.connect(wake_receipt)
+                        cue = SpeechQueue(cast_session.directory, cast, voice=config.get('voice', 'Yuna'))
+                        active_speech = cue
+                        cue.submit_acknowledgement()
+                        cue.finish()
+                        wake_receipt.update(result='pass', speech=cue.events)
+                        if cue.ack_first_playing is not None:
+                            played = time.time() - (time.monotonic() - cue.ack_first_playing)
+                            wake_receipt['capture_end_to_cue_s'] = played - event['capture_ended_wall']
+                    except Exception as exc:
+                        cast_session.invalidate()
+                        wake_receipt.update(result='error', error_type=type(exc).__name__)
+                    finally:
+                        if cue is not None and stopping: cue.abort()
+                        active_speech = None
+                        cast_session.clear_audio()
+                    wake_receipt['finished_wall'] = time.time()
+                    atomic_json(root/'last-wake.json', wake_receipt)
+                    # Cue time must not consume the user's follow-up window.
+                    gate.armed_until = time.monotonic() + gate.window
                 state('armed' if kind == 'armed' else 'listening', True,
                       armed_seconds=gate.window if kind == 'armed' else 0)
                 continue
