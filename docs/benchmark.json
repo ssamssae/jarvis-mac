@@ -49,5 +49,21 @@
     "speaker_finished": true,
     "user_confirmed_heard_once": true,
     "prior_validation_attempt": "Heard once, but completion status timed out; fixed using owned raw terminal events before this successful sample."
+  },
+  "public_acknowledgment_validation": {
+    "sample_count": 1,
+    "input": "actual microphone utterance",
+    "speech_end_to_ack_s": 3.814,
+    "speech_end_to_answer_playing_s": 24.508,
+    "cursor_generation_s": 20.567,
+    "ack_and_answer_finished": true,
+    "user_confirmed_ack_then_answer_once": true,
+    "playback_order": [
+      "ack",
+      "answer"
+    ],
+    "ack_generation_overlap": true,
+    "ack_counted_as_answer_latency": false,
+    "limitation": "Single observation, same setup and question as public trial; service and network variability remain"
   }
 }
