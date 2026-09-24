@@ -29,8 +29,19 @@ def transcribe(binary, model, wav, language='ko', timeout=50):
     with wave.open(str(path), 'rb') as audio:
         if audio.getnchannels() != 1 or audio.getsampwidth() != 2 or audio.getframerate() != 16000:
             raise ValueError('expected_16khz_mono_pcm16')
+        frames = audio.getnframes()
+        short_pcm = audio.readframes(frames) if frames < 32000 else None
     with tempfile.TemporaryDirectory(prefix='jarvis-stt-') as directory:
         output = Path(directory)/'transcript'
+        if short_pcm is not None:
+            # whisper-cli can skip sub-second audio. Preserve speech bytes and add
+            # silence only; never force a transcript with a wake-word prompt.
+            path = Path(directory)/'padded.wav'
+            leading = b'\x00' * (2400 * 2)
+            trailing = b'\x00' * max(0, (32000 - frames - 2400) * 2)
+            with wave.open(str(path), 'wb') as padded:
+                padded.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+                padded.writeframes(leading + short_pcm + trailing)
         process = subprocess.Popen([str(binary), '-m', str(model), '-f', str(path),
             '-l', language, '-nt', '-otxt', '-of', str(output)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

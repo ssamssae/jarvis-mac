@@ -27,6 +27,14 @@ class WhisperWorkerTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual([json.loads(line) for line in result.stdout.splitlines()],
                              [{'ready':True},{'text':'자비스 테스트'}])
+    def test_short_audio_is_padded_without_changing_source_or_speech(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);model,wav,binary=self.fixture(root)
+            original=wav.read_bytes()
+            binary.write_text('#!'+sys.executable+'\nimport sys,pathlib,wave\na=sys.argv\nwith wave.open(a[a.index("-f")+1],"rb") as f:\n assert f.getnframes()>=32000\n assert f.getframerate()==16000\n assert f.getnchannels()==1\n assert f.readframes(2400)==bytes(4800)\npathlib.Path(a[a.index("-of")+1]+".txt").write_text("Jarvis")\n')
+            self.assertEqual(worker.transcribe(binary,model,wav),'Jarvis')
+            self.assertEqual(wav.read_bytes(),original)
+
     def test_failure_is_sanitized(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);model,wav,binary=self.fixture(root)
