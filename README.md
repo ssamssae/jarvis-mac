@@ -226,3 +226,17 @@ An independent worker turns the light OFF (without returning to white mode) on c
 restart after interruption. The default standby is OFF. Network failure is recorded without blocking recognition.
 The indicator releases before appliance commands so it cannot undo a requested light
 change; externally changed fields are preserved. Unsupported bulbs remain unconfigured.
+
+### Optional work-start routine
+
+“일하자”, “일 시작하자”, or “작업 시작하자” can execute a private `work_mode.steps`
+list (up to four trusted local command argument arrays). Configure each step with
+`name`, `kind` (`brightness` or `wake`), and `argv`. Brightness helpers must return
+verified JSON for level 6 of 16. Wake steps require a nonempty `success_marker`
+matching the sender's output; sending a packet is never reported as completed boot.
+Unconfigured or failed steps are named in a partial-result reply. These fixed routines
+bypass the language model and never interpolate utterance text into commands.
+The optional `jarvis_display_brightness.py --level 6` helper targets only built-in
+Mac displays and checks the resulting value (0.375); unsupported system APIs fail
+explicitly. The installer preserves `work_mode`; credentials and device identities
+remain in local configuration. User display auto-brightness policy is unchanged.

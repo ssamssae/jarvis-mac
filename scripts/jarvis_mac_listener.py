@@ -18,6 +18,7 @@ from jarvis_cursor_qa import CursorQA
 from jarvis_smart_home import SmartHome
 from jarvis_weather import weather_reply
 from jarvis_status_light import StatusLight
+import jarvis_work_mode
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -228,8 +229,18 @@ def main():
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
                     plan = home.plan(question)
-                    weather = weather_reply(question, config.get('weather')) if plan is None else None
-                    if weather is not None:
+                    work = jarvis_work_mode.matches(question)
+                    weather = weather_reply(question, config.get('weather')) if plan is None and not work else None
+                    if work:
+                        if not indicator.release():
+                            raise RuntimeError('status_light_restore_failed')
+                        result = jarvis_work_mode.execute(config.get('work_mode'))
+                        receipt['work_mode'] = result
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'work_mode'}, answer=result['answer'])
+                        speech.submit(result['answer'])
+                        speech.finish()
+                    elif weather is not None:
                         receipt['weather'] = weather
                         pipeline = receipt['pipeline']
                         pipeline.update(route={'intent':'weather'}, answer=weather['answer'], sources=weather['sources'])
