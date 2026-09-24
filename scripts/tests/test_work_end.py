@@ -35,6 +35,12 @@ class ConfirmationTests(unittest.TestCase):
             self.assertEqual(c.accept(word, 11, 101), 'cancel')
             self.assertIsNone(c.accept('예', 12, 102))
 
+    def test_cancel_is_local_even_without_pending_confirmation(self):
+        for text in ['취소', '취소 취소', '치솔 치솔', '아니요', '취소해줘']:
+            c = end.Confirmation()
+            self.assertEqual(c.accept(text, 100, 100), 'cancel')
+            self.assertIsNone(c.accept('예', 101, 101))
+
     def test_execution_receipts_and_partial_failure(self):
         cfg = {'steps': [{'name': 'Mac', 'kind': 'brightness', 'argv': ['brightness', '--level', '0']}] * 2 + [{'name': 'PC', 'kind': 'shutdown', 'argv': ['ssh', 'pc', 'shutdown-helper']}] * 2}
         def runner(argv, **kw):
@@ -72,6 +78,10 @@ class RoutingTests(unittest.TestCase):
 
     def test_confirmed_followup_executes_once(self):
         self.assertEqual(self.run_dialog(['자비스 일 끝', '예', '예']), 1)
+
+    def test_standalone_cancel_and_observed_transcription_never_call_model(self):
+        self.assertEqual(self.run_dialog(['자비스 취소']), 0)
+        self.assertEqual(self.run_dialog(['자비스 치솔 치솔']), 0)
 
     def test_cancel_and_failed_prompt_cannot_execute(self):
         self.assertEqual(self.run_dialog(['자비스 일 끝', '아니요', '예']), 0)
