@@ -69,11 +69,10 @@ def execute(config, runner=subprocess.run):
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(step, steps))
-    bright = [x['name'] for x in results if x['status'] == 'brightness_verified']
-    shutdown = [x['name'] for x in results if x['status'] == 'shutdown_requested']
     failed = [x['name'] for x in results if x['status'] not in {'brightness_verified', 'shutdown_requested'}]
-    parts = []
-    if bright: parts.append('·'.join(bright) + ' 화면 밝기를 0칸으로 맞췄어요.')
-    if shutdown: parts.append('·'.join(shutdown) + '에 정상 종료를 요청했어요.')
-    if failed: parts.append('·'.join(failed) + '는 처리 결과를 확인하지 못했어요.')
-    return {'status': 'partial' if failed else 'ok', 'answer': ' '.join(parts) if failed else '작전 종료 절차를 시작합니다.', 'steps': results}
+    shutdown_errors = [result['name'] for item, result in zip(steps, results)
+                       if item.get('kind') == 'shutdown' and result['status'] != 'shutdown_requested']
+    answer = '작전 종료 절차를 시작합니다.'
+    if shutdown_errors:
+        answer += ' ' + '·'.join(shutdown_errors) + '는 종료 요청 결과를 확인하지 못했어요.'
+    return {'status': 'partial' if failed else 'ok', 'answer': answer, 'steps': results}
