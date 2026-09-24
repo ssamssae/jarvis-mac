@@ -51,6 +51,18 @@ def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=N
     return text
 
 
+def require_indicator_release(indicator, speech, receipt):
+    # Do not run a device routine while status-light restoration is uncertain.
+    # Explain the blocked request before normal queue cleanup; never replay it.
+    receipt['stage'] = 'status_light_release'
+    if not indicator.release():
+        answer = '상태등을 정리하지 못해서 요청을 실행하지 않았어요.'
+        receipt['pipeline'].update(route={'intent': 'blocked'}, answer=answer)
+        speech.submit(answer)
+        raise RuntimeError('status_light_restore_failed')
+    receipt['stage'] = 'routine'
+
+
 def is_cancel(text):
     # Exact standalone controls only; never rewrite substrings in ordinary questions.
     word = re.sub(r"[\s,.!?:，。！？]+", "", text).lower()
@@ -288,8 +300,7 @@ def main():
                     work = jarvis_work_mode.matches(question)
                     weather = weather_reply(question, config.get('weather')) if plan is None and not work and ending is None else None
                     if ending is not None:
-                        if not indicator.release():
-                            raise RuntimeError('status_light_restore_failed')
+                        require_indicator_release(indicator, speech, receipt)
                         if ending == 'execute':
                             result = jarvis_work_end.execute(config.get('work_end'))
                         else:
@@ -302,8 +313,7 @@ def main():
                         if ending == 'prompt':
                             work_end.arm(time.monotonic(), time.time())
                     elif work:
-                        if not indicator.release():
-                            raise RuntimeError('status_light_restore_failed')
+                        require_indicator_release(indicator, speech, receipt)
                         result = jarvis_work_mode.execute(config.get('work_mode'))
                         receipt['work_mode'] = result
                         pipeline = receipt['pipeline']
@@ -318,8 +328,7 @@ def main():
                         speech.finish()
                     elif plan is not None:
                         # Release before explicit appliance commands so restoration cannot undo them.
-                        if not indicator.release():
-                            raise RuntimeError('status_light_restore_failed')
+                        require_indicator_release(indicator, speech, receipt)
                         result = home.execute(plan, explicit_voice=True)
                         receipt['smart_home'] = result
                         pipeline = receipt['pipeline']
@@ -352,7 +361,8 @@ def main():
                     'cast_status_unavailable', 'cast_playback_timeout',
                     'cast_receiver_status_unavailable', 'cast_media_status_unavailable',
                     'cast_playback_error', 'cast_playback_interrupted', 'cast_playback_cancelled',
-                    'speech_synthesis_failed', 'speech_encoding_failed', 'speech_queue_timeout'} else 'turn_failed'
+                    'speech_synthesis_failed', 'speech_encoding_failed', 'speech_queue_timeout',
+                    'status_light_restore_failed'} else 'turn_failed'
             finally:
                 if speech is not None:
                     receipt['pipeline']['speech'] = speech.events

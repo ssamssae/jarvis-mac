@@ -228,6 +228,8 @@ Weather data attribution: [Open-Meteo, CC BY 4.0](https://open-meteo.com/en/term
 
 ### Optional status light
 
+If status-light restoration fails before a device routine, the routine remains blocked and Jarvis speaks a failure notice. The receipt records `status_light_restore_failed` and the release stage; the command is never replayed automatically.
+
 Private `status_light` configuration supplies `python` (an existing Tuya environment),
 `map` (local device map), and `device` (the bulb alias). This opt-in adapter supports
 DPS 1–5 with 12-digit HSV color. No local keys enter the public configuration example.
