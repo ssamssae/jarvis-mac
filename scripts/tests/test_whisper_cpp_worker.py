@@ -31,7 +31,7 @@ class WhisperWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);model,wav,binary=self.fixture(root)
             original=wav.read_bytes()
-            binary.write_text('#!'+sys.executable+'\nimport sys,pathlib,wave\na=sys.argv\nwith wave.open(a[a.index("-f")+1],"rb") as f:\n assert f.getnframes()>=32000\n assert f.getframerate()==16000\n assert f.getnchannels()==1\n assert f.readframes(2400)==bytes(4800)\npathlib.Path(a[a.index("-of")+1]+".txt").write_text("Jarvis")\n')
+            binary.write_text('#!'+sys.executable+'\nimport sys,pathlib,wave\na=sys.argv\nwith wave.open(a[a.index("-f")+1],"rb") as f:\n assert f.getnframes()==160+5600+16000\n assert f.getframerate()==16000\n assert f.getnchannels()==1\n assert f.readframes(5600)==bytes(11200)\npathlib.Path(a[a.index("-of")+1]+".txt").write_text("Jarvis")\n')
             self.assertEqual(worker.transcribe(binary,model,wav),'Jarvis')
             self.assertEqual(wav.read_bytes(),original)
 

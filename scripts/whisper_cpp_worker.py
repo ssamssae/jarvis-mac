@@ -37,8 +37,8 @@ def transcribe(binary, model, wav, language='ko', timeout=50):
             # whisper-cli can skip sub-second audio. Preserve speech bytes and add
             # silence only; never force a transcript with a wake-word prompt.
             path = Path(directory)/'padded.wav'
-            leading = b'\x00' * (2400 * 2)
-            trailing = b'\x00' * max(0, (32000 - frames - 2400) * 2)
+            leading = b'\x00' * (5600 * 2)
+            trailing = b'\x00' * (16000 * 2)
             with wave.open(str(path), 'wb') as padded:
                 padded.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
                 padded.writeframes(leading + short_pcm + trailing)
