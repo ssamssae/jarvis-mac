@@ -27,6 +27,9 @@ class Confirmation:
         word = normalize(text)
         pending = now < self.until
         self.cancel()  # Consume before execution; no duplicate yes or later replay.
+        # Cancellation can only remove authority, including the observed ASR typo.
+        if word in {'아니요', '아니오', '취소해줘', '취소해주세요'} or re.fullmatch(r'(?:취소|치솔)+', word):
+            return 'cancel'
         if word == '일끝':
             return 'prompt'
         if pending:
