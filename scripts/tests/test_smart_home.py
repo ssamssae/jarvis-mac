@@ -73,11 +73,17 @@ class SmartHomeTests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class ListenerRoutingTests(unittest.TestCase):
+    def test_status_light_failure_speaks_without_executing_devices(self):
+        self.check_routine(light_failed=True)
+
     def test_routine_bypasses_cursor_and_playback_error_never_repeats_device(self):
+        self.check_routine()
+
+    def check_routine(self, light_failed=False):
         import io,json,tempfile,time
         from unittest.mock import patch,MagicMock
         import jarvis_mac_listener as app
-        for failed_audio in [False,True]:
+        for failed_audio in ([False] if light_failed else [False,True]):
             with tempfile.TemporaryDirectory() as d:
                 root=Path(d);audio=root/'audio';audio.mkdir();clip=audio/'one.wav';clip.write_bytes(b'x'*44)
                 (root/'config.json').write_text(json.dumps({'cast_name':'fixture','model':'fixture','whisper_cli':'fixture'}))
@@ -86,10 +92,22 @@ class ListenerRoutingTests(unittest.TestCase):
                 home=MagicMock();home.plan.return_value={'intent':'sleep','steps':[]}
                 home.execute.return_value={'intent':'sleep','status':'ok','answer':'안녕히 주무세요.'}
                 speech=MagicMock();speech.first_playing=None;speech.ack_first_playing=None;speech.events=[]
+                indicator=MagicMock();indicator.release.return_value=not light_failed
                 if failed_audio:speech.finish.side_effect=RuntimeError('cast_playback_error')
-                with patch.object(sys,'argv',['listener','--state-dir',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps(event)+'\n')),patch.object(sys,'stdout',io.StringIO()),patch.object(app.signal,'signal'),patch.object(app.time,'sleep'),patch.object(app,'SmartHome',return_value=home),patch.object(app,'JSONWorker',return_value=stt),patch.object(app,'CastOutput'),patch.object(app,'SpeechQueue',return_value=speech),patch.object(app,'CursorQA') as qa,patch.object(app,'run_turn') as turn:
+                with patch.object(sys,'argv',['listener','--state-dir',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps(event)+'\n')),patch.object(sys,'stdout',io.StringIO()),patch.object(app.signal,'signal'),patch.object(app.time,'sleep'),patch.object(app,'SmartHome',return_value=home),patch.object(app,'JSONWorker',return_value=stt),patch.object(app,'CastOutput'),patch.object(app,'SpeechQueue',return_value=speech),patch.object(app,'StatusLight',return_value=indicator),patch.object(app,'CursorQA') as qa,patch.object(app,'run_turn') as turn:
                     app.main()
-                qa.assert_not_called();turn.assert_not_called();home.execute.assert_called_once()
+                qa.assert_not_called();turn.assert_not_called()
+                if light_failed:
+                    home.execute.assert_not_called()
+                    speech.submit.assert_called_once()
+                    self.assertIn('실행하지 않았어요', speech.submit.call_args.args[0])
+                    receipt=json.loads((root/'last-turn.json').read_text())
+                    self.assertEqual(receipt['error_code'],'status_light_restore_failed')
+                    self.assertEqual(receipt['stage'],'status_light_release')
+                    self.assertEqual(receipt['result'],'error')
+                    self.assertNotIn('smart_home',receipt)
+                    continue
+                home.execute.assert_called_once()
                 self.assertTrue(home.execute.call_args.kwargs['explicit_voice'])
                 receipt=json.loads((root/'last-turn.json').read_text())
                 self.assertEqual(receipt['smart_home']['status'],'ok')
