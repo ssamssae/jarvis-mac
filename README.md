@@ -196,3 +196,20 @@ Nest가 해당 오디오에 명시적인 `ERROR`를 반환하면 새 URL로 **�
 “자비스”만 부르면 로컬 인식 후 Nest 접수음으로 듣기 준비를 알리고, 효과음 종료부터
 8초 동안 다음 명령을 기다립니다. 호출과 명령을 한 문장으로 말하면 기존처럼 명령
 접수음이 나옵니다. 호출어만으로는 Cursor나 스마트기기를 실행하지 않습니다.
+
+### Live weather
+
+Optional private `config.json` entry `weather` sets `name`, `latitude`, `longitude`,
+`timezone` (default `Asia/Seoul`), and optional locality `aliases`. No default
+location is inferred from the speaker name or IP address. The installer preserves
+this configuration. “오늘 날씨”, “지금 날씨”, “내일 날씨”, and “오늘 비 와?”
+use a live [Open-Meteo](https://open-meteo.com/) forecast lookup and local Korean
+templates without a language-model call. Current temperature is model-derived;
+it is not a local thermometer reading. Daily precipitation probability is the
+maximum for the requested day, not a claim that it is raining now.
+
+Coordinates are sent to Open-Meteo for this request; utterance text is not sent.
+The receipt records the provider, forecast date and fetch time. Timeouts, missing
+values, wrong units and stale current data produce an explicit unavailable reply.
+Unsupported locations or dates do not silently use the configured location.
+Weather data attribution: [Open-Meteo, CC BY 4.0](https://open-meteo.com/en/terms).
