@@ -1,4 +1,4 @@
-# Jarvis Mac · experimental
+# Jarvis Mac v1.1.0 · experimental
 
 **맥에 “자비스”라고 말하면, 로컬 음성 인식 → Cursor 답변 → Google Nest 재생으로 이어지는 작은 음성 비서입니다.**
 
@@ -12,7 +12,11 @@ Mac microphone → local whisper.cpp → “자비스” wake gate
                             macOS say → Google Nest
 ```
 
-현재는 **한국어 하늘/노을 질문을 위한 좁은 근거 기반 데모**입니다. 범용 검색 비서가 아닙니다. 근거가 없는 질문에는 답을 추측하지 않습니다. CLI에서는 질문과 정확히 연결된 외부 근거 JSON을 직접 줄 수 있습니다. 메뉴 앱에는 가전 제어 기능이 없습니다.
+일반 지식 답변은 **한국어 하늘/노을 질문을 위한 좁은 근거 기반 데모**입니다. 범용 검색 비서가 아니며, 근거가 없는 일반 질문에는 답을 추측하지 않습니다. 별도 로컬 설정을 연결하면 스마트기기, 실시간 날씨, 상태등, 작업 시작·확인 후 종료 루틴을 모델 호출 없이 처리합니다. 개인 기기 정보와 제어 명령은 배포본에 포함하지 않습니다. CLI에서는 질문과 정확히 연결된 외부 근거 JSON을 직접 줄 수 있습니다.
+
+## 릴리스
+
+[최신 릴리스](https://github.com/ssamssae/jarvis-mac/releases/latest)에서 설치 스크립트를 포함한 소스 패키지와 SHA-256 체크섬을 제공합니다. 완성된 단독 실행 앱이나 모델 번들이 아닙니다. 아래 준비물을 설치한 뒤 패키지 안의 설치기를 실행하세요. 변경 사항은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 ## 먼저 준비할 것
 
@@ -252,3 +256,21 @@ arrays with `brightness` or `shutdown` kind. Shutdown commands must use normal,
 non-forced shutdown and emit `JARVIS_SHUTDOWN_ACCEPTED` only after acceptance.
 The reply distinguishes shutdown requests from confirmed power-off. The installer
 preserves this configuration. The confirmation path never calls the language model.
+
+### Voice capture and current replies
+
+The native detector uses a -48 dB floor, an 8 dB noise margin, 180 ms minimum
+voiced time, and 350 ms pre-roll. These are experimental defaults, not a guarantee
+for every room or microphone. Clips shorter than two seconds receive 350 ms leading
+and one second trailing silence before local transcription; the speech bytes are
+preserved. Language and model are unchanged, and no wake-word prompt is injected.
+
+“끝” alone, after the wake gate, also asks the work-end confirmation because it was
+observed as a shortened transcription of “일 끝”. It never shuts down immediately.
+Cancellation and observed cancellation-only transcription variants are handled
+locally, including outside the confirmation window. They cannot grant execution.
+
+Current replies are “작전 개시. 시스템 기동을 요청했습니다.”, “오늘의 작전을 종료할까요?”,
+“작전 종료 절차를 시작합니다.”, and “작전 종료 취소. 대기하겠습니다.”.
+Work-end speech omits Mac brightness status while preserving internal results and
+Windows shutdown-request warnings. A requested shutdown is not proof of power-off.
