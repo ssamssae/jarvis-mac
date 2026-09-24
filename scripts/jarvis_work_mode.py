@@ -40,4 +40,4 @@ def execute(config, runner=subprocess.run):
     if bright:parts.append('·'.join(bright)+' 화면 밝기를 6칸으로 맞췄어요.')
     if wakes:parts.append('·'.join(wakes)+'에 전원 켜기 신호를 보냈어요. 부팅 완료는 아직 확인하지 못했어요.')
     if failed:parts.append('·'.join(failed)+'는 처리하지 못했어요.')
-    return {'intent':'work_mode','status':'partial' if failed else 'ok','answer':' '.join(parts),'steps':results}
+    return {'intent':'work_mode','status':'partial' if failed else 'ok','answer':('작전 개시. 시스템 기동을 요청했습니다.' if not failed and len(bright)==2 and len(wakes)==2 else ' '.join(parts)),'steps':results}
