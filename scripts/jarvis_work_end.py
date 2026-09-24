@@ -30,7 +30,7 @@ class Confirmation:
         # Cancellation can only remove authority, including the observed ASR typo.
         if word in {'아니요', '아니오', '취소해줘', '취소해주세요'} or re.fullmatch(r'(?:취소|치솔)+', word):
             return 'cancel'
-        if word == '일끝':
+        if word in {'일끝', '끝'}:
             return 'prompt'
         if pending:
             if speech_started_wall < self.prompt_finished_wall:
