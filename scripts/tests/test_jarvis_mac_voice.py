@@ -10,6 +10,28 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
 
 class VoiceTests(unittest.TestCase):
+    def test_conversation_greeting_and_general_question_reach_cursor_without_sources(self):
+        from unittest.mock import MagicMock
+        for question in ['안녕', '비유가 뭐야?', '하늘은 왜 파래?']:
+            qa=MagicMock();qa.ask_conversation.return_value=iter([
+                {'done':True,'answer':'자비스 답변입니다.','backend':'cursor'}])
+            speech=MagicMock();speech.events=[];speech.first_playing=None
+            with patch.object(m,'retrieve',side_effect=AssertionError('unexpected retrieval')):
+                result=m.run_turn(question,qa,speech,conversation=True)
+            qa.ask_conversation.assert_called_once_with(question,stream=False)
+            qa.ask.assert_not_called()
+            self.assertEqual(result['route']['intent'],'conversation')
+            self.assertEqual(result['generation_backend'],'cursor')
+            self.assertNotIn('abstained',result)
+            speech.submit.assert_called_once_with('자비스 답변입니다.')
+
+    def test_conversation_mode_preserves_direct_command_routing(self):
+        from unittest.mock import MagicMock
+        qa=MagicMock();speech=MagicMock();speech.events=[];speech.first_playing=None
+        result=m.run_turn('볼륨 낮춰',qa,speech,conversation=True)
+        qa.ask_conversation.assert_not_called()
+        self.assertEqual(result['route']['intent'],'volume')
+
     def test_cumulative_stream_never_repeats_sentences(self):
         s = m.Sentences(); emitted = []
         for partial in ['첫', '첫 문장.', '첫 문장. 둘째', '첫 문장. 둘째 문장. 셋째', '첫 문장. 둘째 문장. 셋째입니다.']:
