@@ -44,6 +44,14 @@ def transcribe_for_gate(stt, path, gate, *, english_retry=True):
     return text
 
 
+def is_cancel(text):
+    # Exact standalone controls only; never rewrite substrings in ordinary questions.
+    word = re.sub(r"[\s,.!?:，。！？]+", "", text).lower()
+    return word in {'취소', '취소해', '취소해줘', '취소해주세요', '그만', '그만해',
+                    '그만해줘', 'cancel', '치즈소', '치치소', '치솔'} or bool(
+                        re.fullmatch(r'(?:취소){2,3}', word))
+
+
 class WakeGate:
     def __init__(self, window=8.0):
         self.window = window
@@ -51,6 +59,10 @@ class WakeGate:
 
     def accept(self, text, now):
         match = WAKE.match(text) or KOREAN_WAKE.match(text)
+        question = text[match.end():].strip() if match else text.strip()
+        if (match or now < self.armed_until) and is_cancel(question):
+            self.armed_until = 0.0
+            return 'cancelled', ''
         if match:
             question = text[match.end():].strip()
             self.armed_until = now + self.window if not question else 0.0
@@ -197,16 +209,21 @@ def main():
                 indicator.show('blue')
             if kind != 'question':
                 # Ambient speech and recognition text are never persisted or sent to QA.
-                if kind == 'armed':
+                if kind in {'armed', 'cancelled'}:
                     state('speaking', False)
-                    wake_receipt = {'input_kind':'wake_only', 'stt_s':stt_s,
+                    if kind == 'cancelled':
+                        work_end.cancel()
+                    wake_receipt = {'input_kind':'cancel' if kind == 'cancelled' else 'wake_only', 'stt_s':stt_s,
                                     'capture_ended_wall':event['capture_ended_wall']}
                     cue = None
                     try:
                         cast = cast_session.connect(wake_receipt)
                         cue = SpeechQueue(cast_session.directory, cast, voice=config.get('voice', 'Yuna'))
                         active_speech = cue
-                        cue.submit_acknowledgement()
+                        if kind == 'cancelled':
+                            cue.submit('취소했습니다.')
+                        else:
+                            cue.submit_acknowledgement()
                         cue.finish()
                         wake_receipt.update(result='pass', speech=cue.events)
                         if cue.ack_first_playing is not None:
@@ -214,7 +231,11 @@ def main():
                             wake_receipt['capture_end_to_cue_s'] = played - event['capture_ended_wall']
                     except Exception as exc:
                         cast_session.invalidate()
-                        wake_receipt.update(result='error', error_type=type(exc).__name__)
+                        wake_receipt.update(result='error', error_type=type(exc).__name__,
+                                            error_code=str(exc) if str(exc) in {
+                                                'cast_receiver_status_unavailable', 'cast_media_status_unavailable',
+                                                'cast_playback_timeout', 'cast_playback_error',
+                                                'existing_media_preserved'} else 'cue_failed')
                     finally:
                         if cue is not None and stopping: cue.abort()
                         active_speech = None
@@ -222,8 +243,11 @@ def main():
                     wake_receipt['finished_wall'] = time.time()
                     atomic_json(root/'last-wake.json', wake_receipt)
                     # Cue time must not consume the user's follow-up window.
-                    gate.armed_until = time.monotonic() + gate.window
-                    indicator.show('green', ttl=gate.window)
+                    if kind == 'armed':
+                        gate.armed_until = time.monotonic() + gate.window
+                        indicator.show('green', ttl=gate.window)
+                    else:
+                        indicator.release()
                 state('armed' if kind == 'armed' else 'listening', True,
                       armed_seconds=gate.window if kind == 'armed' else 0)
                 continue

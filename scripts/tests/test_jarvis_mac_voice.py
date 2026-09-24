@@ -193,6 +193,7 @@ class VoiceTests(unittest.TestCase):
                      status=N(content_id='http://ours/voice.wav',player_state='PLAYING'))
         receiver=N(update_status=receiver_status,send_message=lambda data:calls.append(data))
         cast=object.__new__(m.CastOutput)
+        cast.cancelled=m.threading.Event()
         cast.prepare_media=lambda path:path
         cast.target=N(socket_client=N(receiver_controller=receiver),media_controller=controller,
                       quit_app=forbidden,disconnect=lambda:calls.append('disconnect'))
@@ -231,6 +232,22 @@ class VoiceTests(unittest.TestCase):
                     {'playerState':'IDLE','idleReason':'INTERRUPTED','mediaSessionId':42}]})
         cast.target.media_controller.play_media=load
         return cast,calls
+
+    def test_status_retry_during_playback_does_not_load_twice(self):
+        cast, calls = self.observer_playback()
+        original = cast.refresh_status
+        queries = []
+        def flaky(**kwargs):
+            queries.append(kwargs)
+            if len(queries) == 2:
+                raise TimeoutError('cast_receiver_status_unavailable')
+            return original(**kwargs)
+        cast.refresh_status = flaky
+        with patch.object(cast.target.media_controller, 'play_media', wraps=cast.target.media_controller.play_media) as load, patch.object(m.time, 'sleep'):
+            result = cast.play('/tmp/clip.wav', lambda _:None)
+        self.assertTrue(result['finished'])
+        self.assertEqual(load.call_count, 1)
+        self.assertEqual(len(queries), 3)
 
     def test_raw_finished_without_content_is_retained_after_empty_get_status(self):
         cast,calls=self.observer_playback()
