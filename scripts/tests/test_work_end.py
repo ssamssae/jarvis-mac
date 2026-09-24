@@ -16,8 +16,9 @@ class ConfirmationTests(unittest.TestCase):
         c = end.Confirmation()
         self.assertIsNone(c.accept('예', 1, 1))
         self.assertEqual(c.accept('일 끝', 2, 2), 'prompt')
+        self.assertEqual(c.accept('끝!', 2, 2), 'prompt')
         self.assertIsNone(c.accept('예', 3, 3))  # arm only after successful question playback
-        for word in ['일 끝내지마', '일 끝이라고 말해', '일 끝 예']:
+        for word in ['일 끝내지마', '일 끝이라고 말해', '일 끝 예', '끝내지마', '회의 끝', '끝 예']:
             self.assertIsNone(c.accept(word, 3, 3))
 
     def test_yes_once_only_after_prompt_and_before_deadline(self):
@@ -75,6 +76,9 @@ class RoutingTests(unittest.TestCase):
                 app.main()
             qa.assert_not_called(); home.execute.assert_not_called()
             return execute.call_count
+
+    def test_observed_shortened_end_routes_to_prompt_without_execution(self):
+        self.assertEqual(self.run_dialog(['자비스', '끝!', '아니요']), 0)
 
     def test_confirmed_followup_executes_once(self):
         self.assertEqual(self.run_dialog(['자비스 일 끝', '예', '예']), 1)
