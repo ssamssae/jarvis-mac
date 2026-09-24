@@ -19,6 +19,7 @@ from jarvis_smart_home import SmartHome
 from jarvis_weather import weather_reply
 from jarvis_status_light import StatusLight
 import jarvis_work_mode
+import jarvis_work_end
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -132,6 +133,7 @@ def main():
         raise SystemExit('listener_already_running')
     config = json.loads((root/'config.json').read_text())
     gate = WakeGate()
+    work_end = jarvis_work_end.Confirmation()
     home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
         payload = {'state':name, 'listen':listen, 'updated_at':time.time(), 'pid':os.getpid(), **extra}
@@ -229,9 +231,24 @@ def main():
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
                     plan = home.plan(question)
+                    ending = work_end.accept(question, time.monotonic(), event['speech_started_wall'])
                     work = jarvis_work_mode.matches(question)
-                    weather = weather_reply(question, config.get('weather')) if plan is None and not work else None
-                    if work:
+                    weather = weather_reply(question, config.get('weather')) if plan is None and not work and ending is None else None
+                    if ending is not None:
+                        if not indicator.release():
+                            raise RuntimeError('status_light_restore_failed')
+                        if ending == 'execute':
+                            result = jarvis_work_end.execute(config.get('work_end'))
+                        else:
+                            result = {'status': ending, 'answer': jarvis_work_end.PROMPT if ending == 'prompt' else jarvis_work_end.CANCELLED}
+                        receipt['work_end'] = result
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'work_end'}, answer=result['answer'])
+                        speech.submit(result['answer'])
+                        speech.finish()
+                        if ending == 'prompt':
+                            work_end.arm(time.monotonic(), time.time())
+                    elif work:
                         if not indicator.release():
                             raise RuntimeError('status_light_restore_failed')
                         result = jarvis_work_mode.execute(config.get('work_mode'))
@@ -270,6 +287,7 @@ def main():
             except Exception as exc:
                 # No replay/retry within a turn: reconnect only on the next question.
                 cast_session.invalidate()
+                work_end.cancel()
                 receipt['result'] = 'error'
                 # Avoid raw provider output, credentials, or unrelated source paths.
                 receipt['error_type'] = type(exc).__name__
@@ -298,7 +316,11 @@ def main():
             receipt['finished_wall'] = time.time()
             atomic_json(root/'last-turn.json', receipt)
             time.sleep(.5)  # Discard Nest tail before rearming, not a new capture queue.
-            state('listening', True, last_result=receipt['result'])
+            remaining = max(0, work_end.until - time.monotonic())
+            if remaining:
+                gate.armed_until = work_end.until
+                indicator.show('green', ttl=remaining)
+            state('armed' if remaining else 'listening', True, armed_seconds=remaining, last_result=receipt['result'])
     except (KeyboardInterrupt, BrokenPipeError):
         pass
     finally:
