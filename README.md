@@ -240,3 +240,15 @@ The optional `jarvis_display_brightness.py --level 6` helper targets only built-
 Mac displays and checks the resulting value (0.375); unsupported system APIs fail
 explicitly. The installer preserves `work_mode`; credentials and device identities
 remain in local configuration. User display auto-brightness policy is unchanged.
+
+### Confirmed work-end routine
+
+“일 끝” asks whether to lower both Mac displays to level 0 and normally shut down
+both configured Windows PCs. No action runs until a fresh “예” or “네” is recognized
+within 12 seconds after the spoken question finishes. Any other answer cancels;
+timeout, failed question playback, process restart, early audio, and repeated yes
+cannot authorize execution. Private `work_end.steps` holds four trusted `argv`
+arrays with `brightness` or `shutdown` kind. Shutdown commands must use normal,
+non-forced shutdown and emit `JARVIS_SHUTDOWN_ACCEPTED` only after acceptance.
+The reply distinguishes shutdown requests from confirmed power-off. The installer
+preserves this configuration. The confirmation path never calls the language model.
