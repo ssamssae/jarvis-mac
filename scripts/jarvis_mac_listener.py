@@ -172,10 +172,11 @@ def main():
                 path.unlink(missing_ok=True)
             stt_s = time.monotonic() - began
             kind, question = gate.accept(text, time.monotonic())
+            if WAKE.match(text) or KOREAN_WAKE.match(text):
+                indicator.show('blue')
             if kind != 'question':
                 # Ambient speech and recognition text are never persisted or sent to QA.
                 if kind == 'armed':
-                    indicator.show('blue')
                     state('speaking', False)
                     wake_receipt = {'input_kind':'wake_only', 'stt_s':stt_s,
                                     'capture_ended_wall':event['capture_ended_wall']}

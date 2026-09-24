@@ -219,7 +219,7 @@ Weather data attribution: [Open-Meteo, CC BY 4.0](https://open-meteo.com/en/term
 Private `status_light` configuration supplies `python` (an existing Tuya environment),
 `map` (local device map), and `device` (the bulb alias). This opt-in adapter supports
 DPS 1–5 with 12-digit HSV color. No local keys enter the public configuration example.
-A recognized standalone wake displays blue, the follow-up listening window green,
+A recognized wake displays blue, the follow-up listening window green,
 and processing yellow, at 1% color brightness. Ambient speech does not light it.
 An independent worker turns the light OFF (without returning to white mode) on completion,
 8-second follow-up expiry or graceful shutdown. A local recovery journal supports
