@@ -39,8 +39,8 @@ class Confirmation:
         return None
 
 
-PROMPT = '맥북 두 대의 밝기를 0칸으로 내리고, 라이덴과 테미스를 종료할까요? 저장 중인 작업이 없다면 예, 취소하려면 아니요라고 말씀해 주세요.'
-CANCELLED = '작업 종료를 취소했어요.'
+PROMPT = '오늘의 작전을 종료할까요?'
+CANCELLED = '작전 종료 취소. 대기하겠습니다.'
 
 
 def execute(config, runner=subprocess.run):
@@ -76,4 +76,4 @@ def execute(config, runner=subprocess.run):
     if bright: parts.append('·'.join(bright) + ' 화면 밝기를 0칸으로 맞췄어요.')
     if shutdown: parts.append('·'.join(shutdown) + '에 정상 종료를 요청했어요.')
     if failed: parts.append('·'.join(failed) + '는 처리 결과를 확인하지 못했어요.')
-    return {'status': 'partial' if failed else 'ok', 'answer': ' '.join(parts), 'steps': results}
+    return {'status': 'partial' if failed else 'ok', 'answer': ' '.join(parts) if failed else '작전 종료 절차를 시작합니다.', 'steps': results}

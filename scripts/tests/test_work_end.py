@@ -48,7 +48,7 @@ class ConfirmationTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, json.dumps({'verified': True, 'level': 0}) if argv[0] == 'brightness' else 'JARVIS_SHUTDOWN_ACCEPTED', '')
         result = end.execute(cfg, runner)
         self.assertEqual(result['status'], 'ok')
-        self.assertIn('정상 종료를 요청', result['answer'])
+        self.assertEqual('작전 종료 절차를 시작합니다.', result['answer'])
         self.assertNotIn('종료했', result['answer'])
         run = Mock(return_value=subprocess.CompletedProcess([], 255, '', ''))
         self.assertEqual(end.execute(cfg, run)['status'], 'partial')
