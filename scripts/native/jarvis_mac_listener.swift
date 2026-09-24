@@ -47,6 +47,10 @@ final class Listener: NSObject, NSApplicationDelegate {
     private var speechStarted = 0.0
     private var speechEnded = 0.0
     private var noiseDB = -65.0
+    private let voiceFloorDB = -48.0
+    private let voiceNoiseMarginDB = 8.0
+    private let minimumVoiceSeconds = 0.18
+    private let preRollSeconds = 0.35
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -87,7 +91,9 @@ final class Listener: NSObject, NSApplicationDelegate {
             "engine_running": engine.isRunning, "manual_paused": manuallyPaused,
             "controller_ready": controllerReady, "status": statusLabel,
             "updated_wall": Date().timeIntervalSince1970, "sample_rate": sampleRate,
-            "rms_db": latestRMS, "peak_db": latestPeak, "meter_updated_wall": meterUpdated]
+            "rms_db": latestRMS, "peak_db": latestPeak, "meter_updated_wall": meterUpdated,
+            "voice_floor_db": voiceFloorDB, "voice_noise_margin_db": voiceNoiseMarginDB,
+            "minimum_voice_seconds": minimumVoiceSeconds, "pre_roll_seconds": preRollSeconds]
         if let bytes = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
             let path = stateDir.appendingPathComponent("native-status.json")
             try? bytes.write(to: path, options: .atomic)
@@ -252,12 +258,12 @@ final class Listener: NSObject, NSApplicationDelegate {
         }
         let (currentEpoch, enabled) = gateSnapshot()
         guard eligible, enabled, epoch == currentEpoch, accepting else { return }
-        let voiced = db > max(-42, noiseDB + 10)
+        let voiced = db > max(voiceFloorDB, noiseDB + voiceNoiseMarginDB)
         if !voiced { noiseDB = 0.98 * noiseDB + 0.02 * db }
         if samples.isEmpty {
             if !voiced {
                 preRoll.append(contentsOf: chunk)
-                let limit = Int(sampleRate * 0.25)
+                let limit = Int(sampleRate * preRollSeconds)
                 if preRoll.count > limit { preRoll.removeFirst(preRoll.count - limit) }
                 return
             }
@@ -269,7 +275,7 @@ final class Listener: NSObject, NSApplicationDelegate {
         if voiced { voicedSeconds += duration; silentSeconds = 0; speechEnded = ended }
         else { silentSeconds += duration }
         guard silentSeconds >= 0.8 || Double(samples.count) / sampleRate >= 12 else { return }
-        guard voicedSeconds >= 0.25 else { resetSegment(); return }
+        guard voicedSeconds >= minimumVoiceSeconds else { resetSegment(); return }
         accepting = false
         setGate(false)
         let captured = samples, started = speechStarted, lastVoice = speechEnded
