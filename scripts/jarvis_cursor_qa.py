@@ -57,12 +57,14 @@ def parse_result(returncode, stdout, stderr):
 class CursorQA:
     name = "cursor"
 
-    def __init__(self, binary=None, config_directory=None, timeout=90):
+    def __init__(self, binary=None, config_directory=None, timeout=90, *, persistent=False):
         self.binary = pathlib.Path(binary or pathlib.Path.home()/".local/bin/agent").expanduser()
         self.config_directory = pathlib.Path(config_directory or os.environ.get("CURSOR_CONFIG_DIR") or pathlib.Path.home()/".cursor")
         self.timeout = timeout
         self.process = None
         self.history = []
+        self.persistent = persistent
+        self.acp = None
 
     def ask_conversation(self, question, stream=False):
         if not isinstance(question, str) or not question.strip() or len(question) > 4000:
@@ -72,15 +74,25 @@ class CursorQA:
         while len(prompt) > 16000 and len(messages) > 1:
             messages = messages[2:]
             prompt = json.dumps(messages, ensure_ascii=False)
-        for result in self.ask(prompt, stream=stream, instructions=CONVERSATION_INSTRUCTIONS):
-            # Failed/incomplete provider calls never become conversation context.
-            if result.get('done'):
-                self.history += [{'role': 'user', 'content': question},
-                                 {'role': 'assistant', 'content': result['answer']}]
-                self.history = self.history[-12:]
-                while self.history and len(json.dumps(self.history, ensure_ascii=False)) > 10000:
-                    del self.history[:2]
-            yield result
+        if self.persistent:
+            from jarvis_cursor_acp import CursorACP
+            if self.acp is None:
+                self.acp = CursorACP(self.binary, self.config_directory, self.timeout)
+            events = self.acp.ask(CONVERSATION_INSTRUCTIONS + '\n' + prompt, stream=stream)
+        else:
+            events = self.ask(prompt, stream=stream, instructions=CONVERSATION_INSTRUCTIONS)
+        try:
+            for result in events:
+                # Failed/incomplete provider calls never become conversation context.
+                if result.get('done'):
+                    self.history += [{'role': 'user', 'content': question},
+                                     {'role': 'assistant', 'content': result['answer']}]
+                    self.history = self.history[-12:]
+                    while self.history and len(json.dumps(self.history, ensure_ascii=False)) > 10000:
+                        del self.history[:2]
+                yield result
+        finally:
+            if hasattr(events, 'close'): events.close()
 
     def prepare(self):
         raise ValueError("cursor_prewarm_not_supported")
@@ -122,6 +134,8 @@ class CursorQA:
             yield result
 
     def close(self):
+        if self.acp is not None:
+            self.acp.close(); self.acp = None
         process, self.process = self.process, None
         if process is None: return
         # start_new_session gives this invocation its own PGID. The group may

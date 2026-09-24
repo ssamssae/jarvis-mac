@@ -10,6 +10,33 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
 
 class VoiceTests(unittest.TestCase):
+    def test_stream_speaks_complete_sentence_before_terminal_without_duplicates(self):
+        from unittest.mock import MagicMock
+        speech=MagicMock();speech.events=[];speech.first_playing=None
+        def events():
+            yield {'snapshot':'첫 문장. 다','done':False}
+            speech.submit.assert_called_once_with('첫 문장.')
+            yield {'snapshot':'첫 문장. 다음 문장.','done':False}
+            yield {'done':True,'answer':'첫 문장. 다음 문장.','backend':'cursor'}
+        qa=MagicMock();qa.ask_conversation.return_value=events()
+        result=m.run_turn('질문',qa,speech,conversation=True,stream=True)
+        self.assertEqual([c.args[0] for c in speech.submit.call_args_list],['첫 문장.','다음 문장.'])
+        self.assertEqual(result['answer'],'첫 문장. 다음 문장.')
+        self.assertLessEqual(result['first_sentence_s'],result['generation_s'])
+
+    def test_stream_failure_aborts_remaining_audio_and_does_not_claim_success(self):
+        from unittest.mock import MagicMock
+        speech=MagicMock();speech.events=[];speech.first_playing=None
+        def events():
+            yield {'snapshot':'첫 문장. 아직','done':False}
+            raise RuntimeError('cursor_acp_disconnected')
+        qa=MagicMock();qa.ask_conversation.return_value=events();metrics={}
+        with self.assertRaisesRegex(RuntimeError,'disconnected'):
+            m.run_turn('질문',qa,speech,conversation=True,stream=True,metrics=metrics)
+        speech.abort.assert_called_once();speech.finish.assert_not_called()
+        self.assertTrue(metrics['stream_interrupted']);self.assertTrue(metrics['partial_answer_submitted'])
+        self.assertNotIn('answer',metrics)
+
     def test_conversation_greeting_and_general_question_reach_cursor_without_sources(self):
         from unittest.mock import MagicMock
         for question in ['안녕', '비유가 뭐야?', '하늘은 왜 파래?']:

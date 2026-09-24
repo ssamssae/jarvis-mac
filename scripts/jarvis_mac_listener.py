@@ -293,9 +293,10 @@ def main():
                         speech.finish()
                     else:
                         if qa is None:
-                            qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
+                            qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')),
+                                          persistent=True)
                         pipeline = run_turn(question, qa, speech, reviewed_facts=False,
-                                            metrics=receipt['pipeline'], conversation=True)
+                                            metrics=receipt['pipeline'], conversation=True, stream=True)
                     receipt['pipeline'] = pipeline
                     if speech.first_playing is not None:
                         playing_wall = time.time()-(time.monotonic()-speech.first_playing)
