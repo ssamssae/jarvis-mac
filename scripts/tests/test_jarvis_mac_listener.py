@@ -11,14 +11,44 @@ from unittest.mock import MagicMock, patch
 
 
 class EnglishWakeRetryTests(unittest.TestCase):
-    def recognize(self, korean, english=None, armed=False, retry=True):
+    def recognize(self, korean, english=None, armed=False, retry=True, seconds=None):
         stt = MagicMock()
         stt.read.side_effect = [{'text': korean}, {'text': english}]
         gate = WakeGate()
         gate.armed_until = 110 if armed else 0
         with patch('jarvis_mac_listener.time.monotonic', return_value=100):
-            text = transcribe_for_gate(stt, Path('/example.wav'), gate, english_retry=retry)
+            text = transcribe_for_gate(stt, Path('/example.wav'), gate, english_retry=retry, speech_seconds=seconds)
         return text, stt, gate
+
+    def test_short_wake_recovers_without_hey_in_korean_transcript(self):
+        for korean in ('에이 자비', '해이 자비스', '', '서비스'):
+            text, stt, gate = self.recognize(korean, 'Hey Jarvis!', seconds=.8)
+            self.assertEqual(gate.accept(text, 101), ('armed', ''))
+            self.assertEqual(stt.send.call_count, 2)
+
+    def test_short_ambient_english_tail_is_not_a_command(self):
+        for english in ('Hey service', 'Hey Jarvis turn off lights', 'I said Hey Jarvis'):
+            text, _, gate = self.recognize('서비스', english, seconds=.8)
+            self.assertEqual(gate.accept(text, 101), ('ignored', ''))
+        _, stt, _ = self.recognize('일반 대화입니다', seconds=4)
+        self.assertEqual(stt.send.call_count, 1)
+
+    def test_tiny_capture_cannot_become_long_followup(self):
+        text, stt, gate = self.recognize('이것은 짧은 잡음에서 만들어진 아주 긴 잘못된 문장입니다',
+                                       armed=True, seconds=.196)
+        self.assertEqual(text, '')
+        self.assertEqual(gate.accept(text, 101), ('ignored', ''))
+        self.assertEqual(gate.accept('오늘 날씨 알려줘', 102), ('question', '오늘 날씨 알려줘'))
+        self.assertEqual(stt.send.call_count, 1)
+
+    def test_noise_does_not_wake_but_short_controls_survive(self):
+        text, stt, gate = self.recognize('자비스 이것은 잡음에서 만들어진 긴 문장입니다', seconds=.196)
+        self.assertEqual(gate.accept(text, 101), ('ignored', ''))
+        self.assertEqual(stt.send.call_count, 1)
+        for phrase in ('취소', '네', '아니요'):
+            text, stt, _ = self.recognize(phrase, armed=True, seconds=.196)
+            self.assertEqual(text, phrase)
+            self.assertEqual(stt.send.call_count, 1)
 
     def test_hey_misrecognition_recovers_exact_english_wake(self):
         for korean in ('헤이 서비스', '헤이잘비스', 'Hey service'):
@@ -108,7 +138,10 @@ class ControllerTests(unittest.TestCase):
     def test_configured_voice_reaches_speech_queue(self):
         self.check_controller(False, voice="유나 (고품질)")
 
-    def check_controller(self, failing, voice="Yuna", two_turns=False):
+    def test_noise_followup_never_reaches_qa_and_next_question_survives(self):
+        self.check_controller(False, noise=True)
+
+    def check_controller(self, failing, voice="Yuna", two_turns=False, noise=False):
         import io
         from unittest.mock import patch, MagicMock
         import jarvis_mac_listener as app
@@ -120,10 +153,16 @@ class ControllerTests(unittest.TestCase):
             for n in range(3 if two_turns else 2):
                 path = audio/f'{n}.wav'; path.write_bytes(b'x'*44)
                 events.append({'wav':str(path),'speech_started_wall':now-3,'speech_ended_wall':now-1,'capture_ended_wall':now})
-            stt = MagicMock(); stt.read.side_effect = [{'text':'일반 대화'}, {'text':'자비스, 하늘이 파란 이유'}]
+            stt = MagicMock(); stt.read.side_effect = [{'text':'일반 대화'}, {'text':'ordinary conversation'}, {'text':'자비스, 하늘이 파란 이유'}]
             if two_turns:
-                stt.read.side_effect = [{'text':'일반 대화'}, {'text':'자비스, 안녕'},
+                stt.read.side_effect = [{'text':'일반 대화'}, {'text':'ordinary conversation'}, {'text':'자비스, 안녕'},
                                         {'text':'자비스, 아까 뭐라고 했지?'}]
+            if noise:
+                events[0]['speech_started_wall'] = now - 1.196
+                stt.read.side_effect = [{'text':'이것은 잡음에서 만들어진 아주 긴 잘못된 인식 문장입니다'},
+                                        {'text':'하늘이 파란 이유'}]
+            gate = WakeGate()
+            if noise: gate.armed_until = time.monotonic() + 8
             speech = MagicMock(); speech.first_playing = time.monotonic()
             speech.ack_first_playing = time.monotonic() - .5
             speech.events = []
@@ -132,12 +171,14 @@ class ControllerTests(unittest.TestCase):
                  patch.object(sys,'stdout',io.StringIO()), \
                  patch.object(app.signal,'signal'), patch.object(app.time,'sleep'), \
                  patch.object(app,'JSONWorker',return_value=stt), \
+                 patch.object(app,'WakeGate',return_value=gate), \
                  patch.object(app,'CursorQA') as qa, patch.object(app,'CastOutput'), \
                  patch.object(app,'SpeechQueue',return_value=speech) as speech_factory, \
                  patch.object(app,'run_turn',return_value={'generation_backend':'cursor'}, side_effect=RuntimeError('test_failure') if failing else None) as turn:
                 app.main()
             self.assertEqual(speech_factory.call_args.kwargs["voice"], voice)
             self.assertEqual(qa.call_count, 1)
+            self.assertEqual(turn.call_count, 2 if two_turns else 1)
             self.assertEqual(turn.call_args.args[0], '아까 뭐라고 했지?' if two_turns else '하늘이 파란 이유')
             self.assertTrue(turn.call_args.kwargs['conversation'])
             self.assertTrue(turn.call_args.kwargs['stream'])
