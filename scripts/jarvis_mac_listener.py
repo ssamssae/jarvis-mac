@@ -170,6 +170,7 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     stt = None
+    qa = None
     cast_session = None
     indicator = StatusLight(config.get("status_light"), root)
     try:
@@ -291,9 +292,10 @@ def main():
                         speech.submit(result['answer'])
                         speech.finish()
                     else:
-                        qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
-                        cleanup.callback(qa.close)
-                        pipeline = run_turn(question, qa, speech, reviewed_facts=False, metrics=receipt['pipeline'])
+                        if qa is None:
+                            qa = CursorQA(config.get('cursor_binary', str(Path.home()/'.local/bin/agent')))
+                        pipeline = run_turn(question, qa, speech, reviewed_facts=False,
+                                            metrics=receipt['pipeline'], conversation=True)
                     receipt['pipeline'] = pipeline
                     if speech.first_playing is not None:
                         playing_wall = time.time()-(time.monotonic()-speech.first_playing)
@@ -309,7 +311,7 @@ def main():
                 # Avoid raw provider output, credentials, or unrelated source paths.
                 receipt['error_type'] = type(exc).__name__
                 receipt['error_code'] = str(exc) if str(exc) in {
-                    'cursor_keychain_locked', 'cursor_login_required', 'cursor_timeout',
+                    'cursor_keychain_locked', 'cursor_login_required', 'cursor_timeout', 'cursor_model_unavailable',
                     'existing_media_preserved', 'exact_cast_target_missing',
                     'cast_status_unavailable', 'cast_playback_timeout',
                     'cast_receiver_status_unavailable', 'cast_media_status_unavailable',
@@ -342,6 +344,7 @@ def main():
         pass
     finally:
         indicator.close()
+        if qa: qa.close()
         if cast_session: cast_session.close()
         if stt: stt.close()
         for path in audio_dir.glob('*.wav'):

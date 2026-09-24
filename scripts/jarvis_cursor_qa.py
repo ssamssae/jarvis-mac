@@ -16,6 +16,13 @@ INSTRUCTIONS = """한국어 음성 비서입니다. 다음 질문에 제공된 �
 답변은 핵심부터 최대 두 문장으로 쓰세요. 도구를 쓰거나 파일·설정·기기를 변경하지 마세요.
 서두, 작업 설명, 마크다운, 출처 URL 없이 실제로 읽을 답변만 출력하세요.
 """
+CONVERSATION_INSTRUCTIONS = """당신은 자비스라는 한국어 음성 대화 비서입니다.
+아래 JSON의 대화 기록을 참고해 마지막 사용자 발화에 자연스럽게 답하세요.
+인사와 일상 대화에 응답하고, 일반 질문은 알고 있는 지식으로 설명하세요.
+모르는 사실은 추측하지 말고, 실시간 정보는 직접 조회하지 않았음을 구분하세요.
+도구를 쓰거나 파일·설정·기기를 변경하지 마세요. 기기를 제어했다고 주장하지 마세요.
+답변은 핵심부터 짧게 두세 문장으로 쓰세요. 마크다운·작업 설명·URL 없이 읽을 답변만 출력하세요.
+"""
 
 
 def cursor_command(binary, workspace):
@@ -31,6 +38,8 @@ def parse_result(returncode, stdout, stderr):
             raise RuntimeError("cursor_keychain_locked")
         if any(term in error for term in ("not logged in", "unauthenticated", "authentication required")):
             raise RuntimeError("cursor_login_required")
+        if 'unknown model id' in error or 'ai model not found' in error:
+            raise RuntimeError('cursor_model_unavailable')
         raise RuntimeError("cursor_failed_exit_" + str(returncode))
     try:
         result = json.loads(stdout)
@@ -53,11 +62,30 @@ class CursorQA:
         self.config_directory = pathlib.Path(config_directory or os.environ.get("CURSOR_CONFIG_DIR") or pathlib.Path.home()/".cursor")
         self.timeout = timeout
         self.process = None
+        self.history = []
+
+    def ask_conversation(self, question, stream=False):
+        if not isinstance(question, str) or not question.strip() or len(question) > 4000:
+            raise ValueError('invalid_cursor_question')
+        messages = self.history + [{'role': 'user', 'content': question}]
+        prompt = json.dumps(messages, ensure_ascii=False)
+        while len(prompt) > 16000 and len(messages) > 1:
+            messages = messages[2:]
+            prompt = json.dumps(messages, ensure_ascii=False)
+        for result in self.ask(prompt, stream=stream, instructions=CONVERSATION_INSTRUCTIONS):
+            # Failed/incomplete provider calls never become conversation context.
+            if result.get('done'):
+                self.history += [{'role': 'user', 'content': question},
+                                 {'role': 'assistant', 'content': result['answer']}]
+                self.history = self.history[-12:]
+                while self.history and len(json.dumps(self.history, ensure_ascii=False)) > 10000:
+                    del self.history[:2]
+            yield result
 
     def prepare(self):
         raise ValueError("cursor_prewarm_not_supported")
 
-    def ask(self, prompt, stream=False):
+    def ask(self, prompt, stream=False, *, instructions=INSTRUCTIONS):
         if stream: raise ValueError("cursor_sentence_streaming_not_enabled")
         if not isinstance(prompt, str) or not prompt or len(prompt) > 16000:
             raise ValueError("invalid_cursor_prompt")
@@ -87,7 +115,7 @@ class CursorQA:
                 self.process = subprocess.Popen(cursor_command(self.binary, workspace),
                     cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, start_new_session=True)
-                result = collect_stream(self.process, INSTRUCTIONS + "\n" + prompt, start, self.timeout)
+                result = collect_stream(self.process, instructions + "\n" + prompt, start, self.timeout)
                 result["elapsed_s"] = time.monotonic() - start
             finally:
                 self.close()

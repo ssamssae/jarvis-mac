@@ -96,6 +96,9 @@ class ListenerTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_reuses_conversation_adapter_across_questions(self):
+        self.check_controller(False, two_turns=True)
+
     def test_microphone_gates_cloud_deletes_raw_and_measures(self):
         self.check_controller(False)
 
@@ -105,7 +108,7 @@ class ControllerTests(unittest.TestCase):
     def test_configured_voice_reaches_speech_queue(self):
         self.check_controller(False, voice="유나 (고품질)")
 
-    def check_controller(self, failing, voice="Yuna"):
+    def check_controller(self, failing, voice="Yuna", two_turns=False):
         import io
         from unittest.mock import patch, MagicMock
         import jarvis_mac_listener as app
@@ -114,10 +117,13 @@ class ControllerTests(unittest.TestCase):
             (root/'config.json').write_text(json.dumps({'cast_name':'Test speaker','model':'/example/model.bin','whisper_cli':'whisper-cli', 'voice':voice}))
             events = []
             now = time.time()
-            for n in range(2):
+            for n in range(3 if two_turns else 2):
                 path = audio/f'{n}.wav'; path.write_bytes(b'x'*44)
                 events.append({'wav':str(path),'speech_started_wall':now-3,'speech_ended_wall':now-1,'capture_ended_wall':now})
             stt = MagicMock(); stt.read.side_effect = [{'text':'일반 대화'}, {'text':'자비스, 하늘이 파란 이유'}]
+            if two_turns:
+                stt.read.side_effect = [{'text':'일반 대화'}, {'text':'자비스, 안녕'},
+                                        {'text':'자비스, 아까 뭐라고 했지?'}]
             speech = MagicMock(); speech.first_playing = time.monotonic()
             speech.ack_first_playing = time.monotonic() - .5
             speech.events = []
@@ -132,16 +138,19 @@ class ControllerTests(unittest.TestCase):
                 app.main()
             self.assertEqual(speech_factory.call_args.kwargs["voice"], voice)
             self.assertEqual(qa.call_count, 1)
-            self.assertEqual(turn.call_args.args[0], '하늘이 파란 이유')
+            self.assertEqual(turn.call_args.args[0], '아까 뭐라고 했지?' if two_turns else '하늘이 파란 이유')
+            self.assertTrue(turn.call_args.kwargs['conversation'])
+            if two_turns:
+                self.assertIs(turn.call_args_list[0].args[1], turn.call_args_list[1].args[1])
             self.assertFalse(turn.call_args.kwargs['reviewed_facts'])
             self.assertEqual(list(audio.iterdir()), [])
             receipt = json.loads((root/'last-turn.json').read_text())
             self.assertEqual(receipt['result'],'error' if failing else 'pass')
             self.assertGreater(receipt['speech_end_to_playing_s'],0)
             self.assertLess(receipt['speech_end_to_ack_s'], receipt['speech_end_to_playing_s'])
-            speech.submit_acknowledgement.assert_called_once()
+            self.assertEqual(speech.submit_acknowledgement.call_count, 2 if two_turns else 1)
             self.assertNotIn('일반 대화',(root/'last-turn.json').read_text())
-            speech.finish.assert_called_once()
+            self.assertEqual(speech.finish.call_count, 2 if two_turns else 1)
             stt.close.assert_called_once()
 
 

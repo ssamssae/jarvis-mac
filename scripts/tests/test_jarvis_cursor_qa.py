@@ -12,6 +12,40 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 
 class CursorTests(unittest.TestCase):
+    def test_conversation_keeps_successful_pairs_and_uses_general_instructions(self):
+        worker=m.CursorQA()
+        answers=[[{'done':True,'answer':'안녕하세요.'}], [{'done':True,'answer':'파랑입니다.'}]]
+        with patch.object(worker,'ask',side_effect=answers) as ask:
+            list(worker.ask_conversation('안녕. 내 색상은 파랑이야'))
+            list(worker.ask_conversation('내 색상은 뭐야?'))
+        messages=json.loads(ask.call_args.args[0])
+        self.assertEqual([x['role'] for x in messages],['user','assistant','user'])
+        self.assertIn('파랑',messages[0]['content'])
+        self.assertEqual(ask.call_args.kwargs['instructions'],m.CONVERSATION_INSTRUCTIONS)
+        self.assertEqual(len(worker.history),4)
+
+    def test_failed_turn_does_not_poison_context_and_new_instance_is_empty(self):
+        worker=m.CursorQA()
+        with patch.object(worker,'ask',return_value=iter([{'done':True,'answer':'정상'}])):
+            list(worker.ask_conversation('첫 질문'))
+        before=worker.history[:]
+        with patch.object(worker,'ask',side_effect=RuntimeError('cursor_timeout')):
+            with self.assertRaises(RuntimeError):list(worker.ask_conversation('실패한 질문'))
+        self.assertEqual(worker.history,before)
+        self.assertEqual(m.CursorQA().history,[])
+
+    def test_conversation_history_is_bounded_in_complete_pairs(self):
+        worker=m.CursorQA()
+        with patch.object(worker,'ask',side_effect=lambda *a,**k: iter([{'done':True,'answer':'짧은 답'}])):
+            for i in range(10):list(worker.ask_conversation(str(i)))
+        self.assertEqual(len(worker.history),12)
+        self.assertEqual(worker.history[0]['content'],'4')
+        with patch.object(worker,'ask',return_value=iter([{'done':True,'answer':'긴'*7000}])):
+            list(worker.ask_conversation('질문'*1500))
+        self.assertLessEqual(len(json.dumps(worker.history,ensure_ascii=False)),10000)
+        self.assertEqual(len(worker.history)%2,0)
+        with self.assertRaises(ValueError):list(worker.ask_conversation('x'*4001))
+
     def test_final_success_only(self):
         result=m.parse_result(0,json.dumps({'type':'result','subtype':'success','is_error':False,'result':'답입니다.'}), '')
         self.assertEqual(result['answer'],'답입니다.');self.assertEqual(result['backend'],'cursor')
@@ -23,6 +57,8 @@ class CursorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'invalid_answer'):m.parse_result(0,json.dumps({'type':'result','subtype':'success','is_error':False,'result':''}),'')
 
     def test_error_output_is_redacted(self):
+        with self.assertRaisesRegex(RuntimeError,'^cursor_model_unavailable$'):
+            m.parse_result(1,'','ActionRequiredError: AI Model Not Found Unknown model ID: private-model-id')
         with self.assertRaisesRegex(RuntimeError,'^cursor_keychain_locked$'):
             m.parse_result(1,'','Error: keychain is locked; secret data')
         with self.assertRaisesRegex(RuntimeError,'^cursor_failed_exit_3$'):

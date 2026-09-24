@@ -591,7 +591,7 @@ class SpeechQueue:
 
 
 def run_turn(text, qa, speech, *, stream=False, prewarm=False, evidence=None, stt=None,
-             wav=None, command_executor=None, reviewed_facts=True, metrics=None):
+             wav=None, command_executor=None, reviewed_facts=True, metrics=None, conversation=False):
     begin = time.monotonic()
     if metrics is None: metrics = {}
     metrics.update({"input_kind": "wav" if wav else "text", "stream": stream, "prewarm": prewarm})
@@ -601,12 +601,14 @@ def run_turn(text, qa, speech, *, stream=False, prewarm=False, evidence=None, st
         metrics["stt_s"] = time.monotonic() - start
     metrics["text"] = text
     plan = route(text); metrics["route"] = plan
-    if plan["intent"] != "knowledge":
+    if conversation and plan['intent'] == 'knowledge':
+        plan['intent'] = 'conversation'
+    if plan["intent"] not in {"knowledge", "conversation"}:
         result = verified_command(plan, command_executor); metrics["command"] = result
         speech.submit(result["answer"]); metrics["answer"] = result["answer"]
     else:
         start = time.monotonic()
-        try: sources = retrieve(text, evidence)
+        try: sources = [] if conversation else retrieve(text, evidence)
         except (OSError, ValueError) as exc:
             sources = []; metrics["retrieval_error"] = type(exc).__name__
         metrics["retrieval_s"] = time.monotonic() - start
@@ -615,11 +617,13 @@ def run_turn(text, qa, speech, *, stream=False, prewarm=False, evidence=None, st
         if reviewed:
             metrics["answer"] = reviewed; metrics["reviewed_fact"] = True
             for sentence in Sentences().feed(reviewed, final=True): speech.submit(sentence)
-        elif not sources:
+        elif not sources and not conversation:
             metrics["answer"] = ABSTAIN; metrics["abstained"] = True; speech.submit(ABSTAIN)
         else:
             start = time.monotonic(); splitter = Sentences(); metrics["first_sentence_s"] = None
-            for event in qa.ask(grounded_prompt(text, sources), stream=stream):
+            events = (qa.ask_conversation(text, stream=stream) if conversation
+                      else qa.ask(grounded_prompt(text, sources), stream=stream))
+            for event in events:
                 snapshot = event.get("snapshot", event.get("answer", ""))
                 for sentence in splitter.feed(snapshot, final=bool(event.get("done"))):
                     if metrics["first_sentence_s"] is None: metrics["first_sentence_s"] = time.monotonic() - start
