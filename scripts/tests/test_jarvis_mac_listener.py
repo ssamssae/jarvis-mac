@@ -6,7 +6,46 @@ import tempfile
 import time
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jarvis_mac_listener import WakeGate, checked_audio, atomic_json
+from jarvis_mac_listener import WakeGate, checked_audio, atomic_json, transcribe_for_gate
+from unittest.mock import MagicMock, patch
+
+
+class EnglishWakeRetryTests(unittest.TestCase):
+    def recognize(self, korean, english=None, armed=False, retry=True):
+        stt = MagicMock()
+        stt.read.side_effect = [{'text': korean}, {'text': english}]
+        gate = WakeGate()
+        gate.armed_until = 110 if armed else 0
+        with patch('jarvis_mac_listener.time.monotonic', return_value=100):
+            text = transcribe_for_gate(stt, Path('/example.wav'), gate, english_retry=retry)
+        return text, stt, gate
+
+    def test_hey_misrecognition_recovers_exact_english_wake(self):
+        for korean in ('헤이 서비스', '헤이잘비스', 'Hey service'):
+            text, stt, gate = self.recognize(korean, 'Hey Jarvis!')
+            self.assertEqual(gate.accept(text, 101), ('armed', ''))
+            self.assertEqual(stt.send.call_args_list[1].args[0],
+                             {'wav': '/example.wav', 'language': 'en'})
+
+    def test_english_tail_alias_or_ambient_does_not_trigger(self):
+        for english in ('Hey Jarvice', 'Hey Jarvison', 'Jarvis', 'Hey service',
+                        'Hey Jarvis turn off the lights', 'I said Hey Jarvis', ''):
+            text, stt, gate = self.recognize('헤이 서비스', english)
+            self.assertEqual(text, '헤이 서비스')
+            self.assertEqual(gate.accept(text, 101), ('ignored', ''))
+
+    def test_valid_wake_question_and_ambient_keep_single_korean_pass(self):
+        for korean in ('헤이 자비스', '헤이 자비스 오늘 날씨', '자비스',
+                       '오늘 날씨', '나는 헤이 서비스라고 말했다', 'heydays'):
+            text, stt, _ = self.recognize(korean)
+            self.assertEqual(text, korean)
+            self.assertEqual(stt.send.call_count, 1)
+
+    def test_followup_and_custom_worker_do_not_retry(self):
+        for options in ({'armed': True}, {'retry': False}):
+            text, stt, _ = self.recognize('헤이 뜻이 뭐야', **options)
+            self.assertEqual(text, '헤이 뜻이 뭐야')
+            self.assertEqual(stt.send.call_count, 1)
 
 
 class ListenerTests(unittest.TestCase):

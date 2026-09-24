@@ -25,6 +25,23 @@ from whisper_cpp_worker import worker_command
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
 # Korean ASR commonly omits spaces between the vocative and the question.
 KOREAN_WAKE = re.compile(r"^\s*(?:헤이\s*)?(?:자비스|자르비스)(?:야)?[\s,.!?:，。！？]*")
+HEY_PREFIX = re.compile(r"^\s*(?:헤이|hey\b)", re.I)
+ENGLISH_WAKE_ONLY = re.compile(r"\s*hey[\s,.!?:]+jarvis[\s,.!?:]*", re.I)
+
+
+def transcribe_for_gate(stt, path, gate, *, english_retry=True):
+    # Freeze the follow-up state before STT so a slow decode cannot change its language.
+    waiting_for_question = time.monotonic() < gate.armed_until
+    stt.send({'wav': str(path)})
+    text = stt.read()['text'].strip()
+    if (english_retry and not waiting_for_question and HEY_PREFIX.match(text)
+            and not (WAKE.match(text) or KOREAN_WAKE.match(text))):
+        stt.send({'wav': str(path), 'language': 'en'})
+        english = stt.read()['text'].strip()
+        # Never replace a Korean question with an English transcript or execute its tail.
+        if ENGLISH_WAKE_ONLY.fullmatch(english):
+            return 'Hey Jarvis'
+    return text
 
 
 class WakeGate:
@@ -169,8 +186,8 @@ def main():
             state('recognizing', False)
             began = time.monotonic()
             try:
-                stt.send({'wav':str(path)})
-                text = stt.read()['text'].strip()
+                text = transcribe_for_gate(stt, path, gate,
+                                           english_retry=not config.get('stt_worker'))
             finally:
                 path.unlink(missing_ok=True)
             stt_s = time.monotonic() - began
