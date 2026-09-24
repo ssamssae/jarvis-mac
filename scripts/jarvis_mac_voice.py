@@ -402,9 +402,22 @@ class CastOutput:
             finally:
                 retry.unlink(missing_ok=True)
 
+    def read_status_with_retry(self, **kwargs):
+        # Retry only read-only status requests. Never replay LOAD or a device command.
+        for attempt in range(2):
+            if self.cancelled.is_set():
+                raise RuntimeError('speech_cancelled')
+            try:
+                return self.refresh_status(**kwargs)
+            except TimeoutError as exc:
+                if attempt or str(exc) not in {
+                        'cast_receiver_status_unavailable', 'cast_media_status_unavailable'}:
+                    raise
+                time.sleep(.15)
+
     def _play_once(self, path, on_started):
         mc = self.target.media_controller
-        snapshot = self.refresh_status()
+        snapshot = self.read_status_with_retry()
         status = snapshot["media"]
         content = (status.get("media") or {}).get("contentId")
         if status.get("playerState") in {"PLAYING", "PAUSED", "BUFFERING"} and content not in self.owned_urls:
@@ -417,7 +430,7 @@ class CastOutput:
         first = None; media_session = None; deadline = time.monotonic() + 50
         while time.monotonic() < deadline:
             if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
-            snapshot = self.refresh_status(query_media=False)
+            snapshot = self.read_status_with_retry(query_media=False)
             identity = (snapshot["session_id"], snapshot["transport_id"])
             with self.lock:
                 events = list(self.media_events); self.media_events.clear()

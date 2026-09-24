@@ -54,3 +54,35 @@ class RetryTests(unittest.TestCase):
                 c._play_once=Mock(side_effect=RuntimeError(error))
                 with self.assertRaisesRegex(RuntimeError,error):c.play(p,lambda _:None)
                 self.assertEqual(c._play_once.call_count,count)
+
+class PreLoadStatusRecoveryTests(unittest.TestCase):
+    def make_cast(self):
+        import threading
+        from unittest.mock import Mock
+        c = object.__new__(CastOutput); c.cancelled = threading.Event()
+        c.refresh_status = Mock()
+        return c
+
+    def test_transient_status_failure_recovers_before_any_load(self):
+        for code in ('cast_receiver_status_unavailable', 'cast_media_status_unavailable'):
+            c = self.make_cast(); expected = {'media':{}, 'session_id':None}
+            c.refresh_status.side_effect = [TimeoutError(code), expected]
+            with patch('jarvis_mac_voice.time.sleep'):
+                self.assertEqual(c.read_status_with_retry(), expected)
+            self.assertEqual(c.refresh_status.call_count, 2)
+
+    def test_persistent_failure_bounded_and_other_errors_not_retried(self):
+        for error, count in [(TimeoutError('cast_receiver_status_unavailable'), 2),
+                             (TimeoutError('cast_playback_timeout'), 1),
+                             (RuntimeError('existing_media_preserved'), 1)]:
+            c = self.make_cast(); c.refresh_status.side_effect = error
+            with patch('jarvis_mac_voice.time.sleep'), self.assertRaises(type(error)):
+                c.read_status_with_retry()
+            self.assertEqual(c.refresh_status.call_count, count)
+
+    def test_cancellation_during_retry_prevents_second_request(self):
+        c = self.make_cast(); c.refresh_status.side_effect = TimeoutError('cast_receiver_status_unavailable')
+        with patch('jarvis_mac_voice.time.sleep', side_effect=lambda _:c.cancelled.set()):
+            with self.assertRaisesRegex(RuntimeError, 'speech_cancelled'):
+                c.read_status_with_retry()
+        self.assertEqual(c.refresh_status.call_count, 1)

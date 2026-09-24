@@ -203,3 +203,37 @@ class WakeCueTests(unittest.TestCase):
             self.assertEqual(next(x for x in states if x['state']=='armed')['armed_seconds'],8)
             self.assertEqual(json.loads((root/'last-wake.json').read_text())['result'],'pass')
             self.assertFalse((root/'last-turn.json').exists())
+
+class VoiceCancelTests(unittest.TestCase):
+    def test_exact_cancel_consumes_window_without_question(self):
+        for word in ('취소', '취소 취소', '취소해줘', '치즈소', '치치소', '그만'):
+            gate = WakeGate()
+            gate.accept('헤이 자비스', 1)
+            self.assertEqual(gate.accept(word, 2), ('cancelled', ''))
+            self.assertEqual(gate.accept('불 꺼', 3), ('ignored', ''))
+            self.assertEqual(gate.accept('헤이 자비스, ' + word, 4), ('cancelled', ''))
+
+    def test_real_questions_and_ambient_are_preserved(self):
+        for word in ('치즈 소스 만드는 법', '취소 방법 알려줘', '취소하지 마', '그만이라는 말 뜻'):
+            gate = WakeGate(); gate.accept('자비스', 1)
+            self.assertEqual(gate.accept(word, 2), ('question', word))
+        self.assertEqual(WakeGate().accept('치즈소', 2), ('ignored', ''))
+
+    def test_cancel_controller_never_calls_model_or_appliance(self):
+        import io
+        import jarvis_mac_listener as app
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); audio = root/'audio'; audio.mkdir()
+            (root/'config.json').write_text(json.dumps({'cast_name':'fixture','model':'fixture','whisper_cli':'fixture'}))
+            clip = audio/'cancel.wav'; clip.write_bytes(b'x'*44); now = time.time()
+            event = {'wav':str(clip),'speech_started_wall':now-2,'speech_ended_wall':now-1,'capture_ended_wall':now}
+            stt = MagicMock(); stt.read.return_value = {'text':'자비스 취소'}
+            cue = MagicMock(); cue.events = []; cue.ack_first_playing = None
+            with patch.object(sys,'argv',['listener','--state-dir',str(root)]), patch.object(sys,'stdin',io.StringIO(json.dumps(event)+'\n')), patch.object(sys,'stdout',io.StringIO()), patch.object(app.signal,'signal'), patch.object(app,'JSONWorker',return_value=stt), patch.object(app,'CastOutput'), patch.object(app,'SpeechQueue',return_value=cue), patch.object(app,'SmartHome') as home, patch.object(app,'CursorQA') as qa, patch.object(app.jarvis_work_end,'Confirmation') as ending:
+                app.main()
+            qa.assert_not_called(); home.return_value.plan.assert_not_called()
+            cue.submit.assert_called_once_with('취소했습니다.')
+            cue.submit_acknowledgement.assert_not_called()
+            ending.return_value.cancel.assert_called_once()
+            self.assertEqual(json.loads((root/'last-wake.json').read_text())['input_kind'], 'cancel')
+            self.assertFalse((root/'last-turn.json').exists())
