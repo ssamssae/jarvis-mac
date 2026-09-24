@@ -29,12 +29,19 @@ HEY_PREFIX = re.compile(r"^\s*(?:헤이|hey\b)", re.I)
 ENGLISH_WAKE_ONLY = re.compile(r"\s*hey[\s,.!?:]+jarvis[\s,.!?:]*", re.I)
 
 
-def transcribe_for_gate(stt, path, gate, *, english_retry=True):
+def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None):
     # Freeze the follow-up state before STT so a slow decode cannot change its language.
     waiting_for_question = time.monotonic() < gate.armed_until
     stt.send({'wav': str(path)})
     text = stt.read()['text'].strip()
-    if (english_retry and not waiting_for_question and HEY_PREFIX.match(text)
+    # A sub-400ms burst cannot plausibly contain a long sentence. Keep short
+    # replies/cancel controls; do not consume the follow-up window for noise.
+    if (speech_seconds is not None and speech_seconds < .4
+            and sum(c.isalnum() for c in text) > 8):
+        return ''
+    short_wake = speech_seconds is not None and .4 <= speech_seconds <= 2.5
+    if (english_retry and not waiting_for_question
+            and (short_wake or HEY_PREFIX.match(text))
             and not (WAKE.match(text) or KOREAN_WAKE.match(text))):
         stt.send({'wav': str(path), 'language': 'en'})
         english = stt.read()['text'].strip()
@@ -68,8 +75,10 @@ class WakeGate:
             self.armed_until = now + self.window if not question else 0.0
             return ('question', question) if question else ('armed', '')
         if now < self.armed_until:
+            if not text.strip():
+                return 'ignored', ''
             self.armed_until = 0.0
-            return ('question', text.strip()) if text.strip() else ('ignored', '')
+            return 'question', text.strip()
         self.armed_until = 0.0
         return 'ignored', ''
 
@@ -200,7 +209,8 @@ def main():
             began = time.monotonic()
             try:
                 text = transcribe_for_gate(stt, path, gate,
-                                           english_retry=not config.get('stt_worker'))
+                                           english_retry=not config.get('stt_worker'),
+                                           speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'])
             finally:
                 path.unlink(missing_ok=True)
             stt_s = time.monotonic() - began
@@ -248,8 +258,9 @@ def main():
                         indicator.show('green', ttl=gate.window)
                     else:
                         indicator.release()
-                state('armed' if kind == 'armed' else 'listening', True,
-                      armed_seconds=gate.window if kind == 'armed' else 0)
+                remaining = gate.window if kind == 'armed' else max(0.0, gate.armed_until - time.monotonic())
+                state('armed' if remaining else 'listening', True,
+                      armed_seconds=remaining)
                 continue
             indicator.show('yellow')
             state('answering', False)
