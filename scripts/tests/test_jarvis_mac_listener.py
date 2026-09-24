@@ -140,6 +140,8 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(qa.call_count, 1)
             self.assertEqual(turn.call_args.args[0], '아까 뭐라고 했지?' if two_turns else '하늘이 파란 이유')
             self.assertTrue(turn.call_args.kwargs['conversation'])
+            self.assertTrue(turn.call_args.kwargs['stream'])
+            self.assertTrue(qa.call_args.kwargs['persistent'])
             if two_turns:
                 self.assertIs(turn.call_args_list[0].args[1], turn.call_args_list[1].args[1])
             self.assertFalse(turn.call_args.kwargs['reviewed_facts'])

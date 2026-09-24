@@ -623,16 +623,25 @@ def run_turn(text, qa, speech, *, stream=False, prewarm=False, evidence=None, st
             start = time.monotonic(); splitter = Sentences(); metrics["first_sentence_s"] = None
             events = (qa.ask_conversation(text, stream=stream) if conversation
                       else qa.ask(grounded_prompt(text, sources), stream=stream))
-            for event in events:
-                snapshot = event.get("snapshot", event.get("answer", ""))
-                for sentence in splitter.feed(snapshot, final=bool(event.get("done"))):
-                    if metrics["first_sentence_s"] is None: metrics["first_sentence_s"] = time.monotonic() - start
-                    speech.submit(sentence)
-                if event.get("done"):
-                    metrics["answer"] = event["answer"]
-                    if event.get("backend"): metrics["generation_backend"] = event["backend"]
-                    for key in ("provider_duration_ms", "elapsed_s", "timings"):
-                        if key in event: metrics["generation_" + key] = event[key]
+            try:
+                for event in events:
+                    snapshot = event.get("snapshot", event.get("answer", ""))
+                    for sentence in splitter.feed(snapshot, final=bool(event.get("done"))):
+                        if metrics["first_sentence_s"] is None: metrics["first_sentence_s"] = time.monotonic() - start
+                        speech.submit(sentence)
+                    if event.get("done"):
+                        metrics["answer"] = event["answer"]
+                        if event.get("backend"): metrics["generation_backend"] = event["backend"]
+                        for key in ("provider_duration_ms", "elapsed_s", "timings"):
+                            if key in event: metrics["generation_" + key] = event[key]
+            except BaseException:
+                if stream:
+                    metrics['stream_interrupted'] = True
+                    metrics['partial_answer_submitted'] = bool(splitter.offset)
+                    speech.abort()
+                raise
+            finally:
+                if hasattr(events, 'close'): events.close()
             metrics["generation_s"] = time.monotonic() - start
     speech.finish()
     metrics["speech"] = speech.events
