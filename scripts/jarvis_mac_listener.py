@@ -17,6 +17,7 @@ from jarvis_mac_voice import JSONWorker, CastOutput, SpeechQueue, run_turn
 from jarvis_cursor_qa import CursorQA
 from jarvis_smart_home import SmartHome
 from jarvis_weather import weather_reply
+from jarvis_status_light import StatusLight
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -150,6 +151,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
     stt = None
     cast_session = None
+    indicator = StatusLight(config.get("status_light"), root)
     try:
         state('preparing', False)
         stt = JSONWorker(worker_command(config))
@@ -173,6 +175,7 @@ def main():
             if kind != 'question':
                 # Ambient speech and recognition text are never persisted or sent to QA.
                 if kind == 'armed':
+                    indicator.show('blue')
                     state('speaking', False)
                     wake_receipt = {'input_kind':'wake_only', 'stt_s':stt_s,
                                     'capture_ended_wall':event['capture_ended_wall']}
@@ -198,9 +201,11 @@ def main():
                     atomic_json(root/'last-wake.json', wake_receipt)
                     # Cue time must not consume the user's follow-up window.
                     gate.armed_until = time.monotonic() + gate.window
+                    indicator.show('green', ttl=gate.window)
                 state('armed' if kind == 'armed' else 'listening', True,
                       armed_seconds=gate.window if kind == 'armed' else 0)
                 continue
+            indicator.show('yellow')
             state('answering', False)
             receipt = {'input_kind':'microphone', 'wake_mode':'local_transcription_utterance_prefix',
                        'recognized_text':text, 'question':question, 'stt_s':stt_s,
@@ -230,6 +235,9 @@ def main():
                         speech.submit(weather['answer'])
                         speech.finish()
                     elif plan is not None:
+                        # Release before explicit appliance commands so restoration cannot undo them.
+                        if not indicator.release():
+                            raise RuntimeError('status_light_restore_failed')
                         result = home.execute(plan, explicit_voice=True)
                         receipt['smart_home'] = result
                         pipeline = receipt['pipeline']
@@ -272,6 +280,7 @@ def main():
                         receipt['playing_wall'] = playing_wall
                         receipt['speech_end_to_playing_s'] = playing_wall-event['speech_ended_wall']
                         receipt['speech_start_to_playing_s'] = playing_wall-event['speech_started_wall']
+                indicator.release()
                 cast_session.clear_audio()
                 active_speech = None
             receipt['finished_wall'] = time.time()
@@ -281,6 +290,7 @@ def main():
     except (KeyboardInterrupt, BrokenPipeError):
         pass
     finally:
+        indicator.close()
         if cast_session: cast_session.close()
         if stt: stt.close()
         for path in audio_dir.glob('*.wav'):

@@ -213,3 +213,16 @@ The receipt records the provider, forecast date and fetch time. Timeouts, missin
 values, wrong units and stale current data produce an explicit unavailable reply.
 Unsupported locations or dates do not silently use the configured location.
 Weather data attribution: [Open-Meteo, CC BY 4.0](https://open-meteo.com/en/terms).
+
+### Optional status light
+
+Private `status_light` configuration supplies `python` (an existing Tuya environment),
+`map` (local device map), and `device` (the bulb alias). This opt-in adapter supports
+DPS 1–5 with 12-digit HSV color. No local keys enter the public configuration example.
+A recognized standalone wake displays blue, the follow-up listening window green,
+and processing yellow, at 1% color brightness. Ambient speech does not light it.
+An independent worker turns the light OFF (without returning to white mode) on completion,
+8-second follow-up expiry or graceful shutdown. A local recovery journal supports
+restart after interruption. The default standby is OFF. Network failure is recorded without blocking recognition.
+The indicator releases before appliance commands so it cannot undo a requested light
+change; externally changed fields are preserved. Unsupported bulbs remain unconfigured.
