@@ -31,13 +31,15 @@ HEY_PREFIX = re.compile(r"^\s*(?:헤이|hey\b)", re.I)
 ENGLISH_WAKE_ONLY = re.compile(r"\s*hey[\s,.!?:]+jarvis[\s,.!?:]*", re.I)
 
 
-def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None, japanese_confirmation=False, selection_context=None):
+def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None, japanese_confirmation=False, selection_context=None, japanese_command=False):
     # Freeze the follow-up state before STT so a slow decode cannot change its language.
     waiting_for_question = time.monotonic() < gate.armed_until
-    stt.send({'wav': str(path), **({'language': 'ja'} if japanese_confirmation else {}),
+    stt.send({'wav': str(path), **({'language': 'ja'} if japanese_confirmation or japanese_command else {}),
               **({'selection_context': selection_context} if selection_context else {})})
     text = stt.read()['text'].strip()
-    if japanese_confirmation:
+    if japanese_command and speech_seconds is not None and speech_seconds < .4:
+        return ''
+    if japanese_confirmation or japanese_command:
         return text
     # A sub-400ms burst cannot plausibly contain a long sentence. Keep short
     # replies/cancel controls; do not consume the follow-up window for noise.
@@ -190,6 +192,7 @@ def main():
     gate = WakeGate()
     dictation = Dictation(capture_node=config.get('dictation', {}).get('capture_node'))
     work_end = jarvis_work_end.Confirmation()
+    japanese_command_until = 0.0
     home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
         payload = {'state':name, 'listen':listen, 'updated_at':time.time(), 'pid':os.getpid(), **extra}
@@ -221,10 +224,11 @@ def main():
               startup_prepare_s=cast_session.startup_prepare_s,
               startup_prepare_error=cast_session.startup_prepare_error)
         for event in control_events(sys.stdin, root):
+            japanese_command = False
             external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
             external_dictation = event.get('source') == 'google-home-matter' and event.get('intent') == 'dictation_start'
             if external_end or external_dictation:
-                if dictation.target or dictation.selecting or time.monotonic() < work_end.until:
+                if dictation.target or dictation.selecting or time.monotonic() < max(work_end.until, japanese_command_until):
                     continue
                 text, kind, question, stt_s = '', 'question', '보이스 스타토' if external_dictation else '시고토 오와리', 0
                 gate.armed_until = 0
@@ -240,8 +244,13 @@ def main():
                 state('dictating' if dictation.target else 'recognizing', bool(dictation.target),
                       dictation_id=dictation.request_id or '')
                 began = time.monotonic()
+                japanese_command = began < japanese_command_until
+                japanese_command_until = 0.0  # One utterance, including failed or unknown input.
+                if japanese_command:
+                    gate.armed_until = 0
                 try:
                     text = transcribe_for_gate(stt, path, gate,
+                                               japanese_command=japanese_command,
                                                english_retry=not config.get('stt_worker') and not dictation.selecting and not dictation.target,
                                                selection_context=dictation.selection_stage if not config.get('stt_worker') else None,
                                                speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
@@ -307,7 +316,9 @@ def main():
                     state('dictating' if dictation.target else 'listening', True,
                           dictation_id=dictation.request_id or '')
                     continue
-                if dictation.selecting:
+                if japanese_command:
+                    kind, question = 'question', text
+                elif dictation.selecting:
                     # Selection replies stay local, even when unknown or expired.
                     kind, question = 'question', text
                 else:
@@ -368,6 +379,8 @@ def main():
                        'speech_ended_wall':event['speech_ended_wall'],
                        'capture_ended_wall':event['capture_ended_wall'],
                        'endpoint_s':event['capture_ended_wall']-event['speech_ended_wall']}
+            if japanese_command:
+                receipt['stt_language'] = 'ja'
             speech = None
             receipt['pipeline'] = {}
             try:
@@ -381,13 +394,31 @@ def main():
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
                     selection_answer = dictation.select(question, cancelled=is_cancel(question),
-                                                         start_source='google-home-matter' if external_dictation else 'microphone')
-                    dictation_control = selection_answer is not None or dictation.start(question)
-                    plan = home.plan(question) if not dictation_control else None
+                                                         start_source='google-home-matter' if external_dictation else 'microphone') if not japanese_command else None
+                    dictation_control = not japanese_command and (selection_answer is not None or dictation.start(question))
+                    japanese_trigger = not japanese_command and not dictation_control and jarvis_work_end.normalize(question) == '일본어'
+                    plan = home.plan(question) if not dictation_control and not japanese_command and not japanese_trigger else None
                     ending = work_end.accept(question, time.monotonic(), event['speech_started_wall']) if not dictation_control else None
                     work = jarvis_work_mode.matches(question) if not dictation_control else False
-                    weather = weather_reply(question, config.get('weather')) if not dictation_control and plan is None and not work and ending is None else None
-                    if dictation_control:
+                    weather = weather_reply(question, config.get('weather')) if not dictation_control and not japanese_command and not japanese_trigger and plan is None and not work and ending is None else None
+                    if japanese_trigger:
+                        gate.armed_until = 0
+                        work_end.cancel()
+                        answer = '일본어로 말씀하세요.' if not config.get('stt_worker') else '현재 음성 인식기는 일본어 전환을 지원하지 않아요.'
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'japanese_command'}, answer=answer)
+                        speech.submit(answer)
+                        speech.finish()
+                        if not config.get('stt_worker'):
+                            japanese_command_until = time.monotonic() + gate.window
+                    elif japanese_command and ending != 'prompt' and not work:
+                        work_end.cancel()
+                        answer = '작업 시작이나 종료 명령을 알아듣지 못했어요.'
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'japanese_command'}, answer=answer)
+                        speech.submit(answer)
+                        speech.finish()
+                    elif dictation_control:
                         gate.armed_until = 0
                         work_end.cancel()
                         if not config.get('dictation', {}).get('argv'):
@@ -453,6 +484,7 @@ def main():
                 # No replay/retry within a turn: reconnect only on the next question.
                 cast_session.invalidate()
                 work_end.cancel()
+                japanese_command_until = 0.0
                 # A missing Cast FINISHED event after prompt playback started
                 # must not silently discard the chosen target or selection.
                 prompt_started_timeout = (
@@ -492,9 +524,9 @@ def main():
             receipt['finished_wall'] = time.time()
             atomic_json(root/'last-turn.json', receipt)
             time.sleep(.5)  # Discard Nest tail before rearming, not a new capture queue.
-            remaining = max(0, work_end.until - time.monotonic())
+            remaining = max(0, max(work_end.until, japanese_command_until) - time.monotonic())
             if remaining:
-                gate.armed_until = work_end.until
+                gate.armed_until = max(work_end.until, japanese_command_until)
                 indicator.show('green', ttl=remaining)
             if dictation.target:
                 indicator.show('green', ttl=0)
