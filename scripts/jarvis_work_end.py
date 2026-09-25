@@ -15,10 +15,12 @@ class Confirmation:
     def __init__(self):
         self.until = 0
         self.prompt_finished_wall = 0
+        self.japanese = False
 
-    def arm(self, now, wall):
+    def arm(self, now, wall, *, japanese=False):
         self.until = now + self.window
         self.prompt_finished_wall = wall
+        self.japanese = japanese
 
     def cancel(self):
         self.until = 0
@@ -35,11 +37,13 @@ class Confirmation:
         if pending:
             if speech_started_wall < self.prompt_finished_wall:
                 return 'cancel'
-            return 'execute' if word in {'예', '네'} else 'cancel'
+            allowed = {'はい'} if self.japanese else {'예', '네'}
+            return 'execute' if word in allowed else 'cancel'
         return None
 
 
 PROMPT = '오늘의 작전을 종료할까요?'
+GOOGLE_PROMPT = '오늘의 작전을 종료할까요? 하이라고 답해주세요.'
 CANCELLED = '작전 종료 취소. 대기하겠습니다.'
 
 

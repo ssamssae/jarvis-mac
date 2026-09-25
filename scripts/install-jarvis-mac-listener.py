@@ -58,7 +58,7 @@ def main():
             if path.is_dir(): shutil.copytree(path, backup/path.name)
             else: shutil.copy2(path, backup/path.name)
     runtime = root/'runtime'; runtime.mkdir(exist_ok=True)
-    for name in ('jarvis_mac_voice.py','jarvis_cursor_qa.py','jarvis_cursor_acp.py','jarvis_mac_listener.py','whisper_cpp_worker.py','jarvis_smart_home.py','jarvis_weather.py','jarvis_status_light.py','jarvis_work_mode.py','jarvis_work_end.py','jarvis_display_brightness.py'):
+    for name in ('jarvis_mac_voice.py','jarvis_cursor_qa.py','jarvis_cursor_acp.py','jarvis_mac_listener.py','jarvis_control_inbox.py','whisper_cpp_worker.py','jarvis_smart_home.py','jarvis_weather.py','jarvis_status_light.py','jarvis_work_mode.py','jarvis_work_end.py','jarvis_display_brightness.py'):
         shutil.copy2(scripts/name, runtime/name)
     venv = root/'venv'
     if not (venv/'bin/python3').exists():

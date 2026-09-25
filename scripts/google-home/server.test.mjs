@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStartNode } from './server.mjs';
 
-test('Matter endpoint calls the existing adapter on ON only and resets', async () => {
+test('ON starts; only an explicit OFF command requests confirmation, never reset or restart', async () => {
     const storage = await mkdtemp(join(tmpdir(), 'jarvis-matter-test-'));
-    let calls = 0, node;
+    let calls = 0, ends = 0, node;
     try {
-        const fixture = await createStartNode({ storage, run: async () => { calls++; } });
+        const fixture = await createStartNode({ storage, run: async () => { calls++; }, requestEnd: async () => { ends++; } });
         node = fixture.node;
         assert.equal(calls, 0);
         await fixture.button.set({ onOff: { onOff: true } });
@@ -18,10 +18,17 @@ test('Matter endpoint calls the existing adapter on ON only and resets', async (
         assert.equal(fixture.button.state.onOff.onOff, false);
         await fixture.button.set({ onOff: { onOff: false } });
         assert.equal(calls, 1);
+        assert.equal(ends, 0);
+        await fixture.button.act(agent => agent.onOff.off());
+        await fixture.idle();
+        assert.equal(ends, 1);
+        await fixture.button.act(agent => agent.onOff.off());
+        assert.equal(ends, 1); // duplicate requests cannot extend authority
         await node.close();
-        const restarted = await createStartNode({ storage, run: async () => { calls++; } });
+        const restarted = await createStartNode({ storage, run: async () => { calls++; }, requestEnd: async () => { ends++; } });
         node = restarted.node;
         assert.equal(calls, 1);
+        assert.equal(ends, 1);
         assert.equal(restarted.button.state.onOff.onOff, false);
     } finally {
         if (node) await node.close();

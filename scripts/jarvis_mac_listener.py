@@ -20,6 +20,7 @@ from jarvis_weather import weather_reply
 from jarvis_status_light import StatusLight
 import jarvis_work_mode
 import jarvis_work_end
+from jarvis_control_inbox import events as control_events
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -29,11 +30,13 @@ HEY_PREFIX = re.compile(r"^\s*(?:헤이|hey\b)", re.I)
 ENGLISH_WAKE_ONLY = re.compile(r"\s*hey[\s,.!?:]+jarvis[\s,.!?:]*", re.I)
 
 
-def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None):
+def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None, japanese_confirmation=False):
     # Freeze the follow-up state before STT so a slow decode cannot change its language.
     waiting_for_question = time.monotonic() < gate.armed_until
-    stt.send({'wav': str(path)})
+    stt.send({'wav': str(path), **({'language': 'ja'} if japanese_confirmation else {})})
     text = stt.read()['text'].strip()
+    if japanese_confirmation:
+        return text
     # A sub-400ms burst cannot plausibly contain a long sentence. Keep short
     # replies/cancel controls; do not consume the follow-up window for noise.
     if (speech_seconds is not None and speech_seconds < .4
@@ -214,19 +217,26 @@ def main():
         state('listening', True, cast_prepared=cast_session.cast is not None,
               startup_prepare_s=cast_session.startup_prepare_s,
               startup_prepare_error=cast_session.startup_prepare_error)
-        for line in sys.stdin:
-            event = json.loads(line)
-            path = checked_audio(event, audio_dir)
-            state('recognizing', False)
-            began = time.monotonic()
-            try:
-                text = transcribe_for_gate(stt, path, gate,
-                                           english_retry=not config.get('stt_worker'),
-                                           speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'])
-            finally:
-                path.unlink(missing_ok=True)
-            stt_s = time.monotonic() - began
-            kind, question = gate.accept(text, time.monotonic())
+        for event in control_events(sys.stdin, root):
+            external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
+            if external_end:
+                if time.monotonic() < work_end.until:
+                    continue  # A repeated remote request never extends a confirmation.
+                text, kind, question, stt_s = '', 'question', '일 끝', 0
+                gate.armed_until = 0
+            else:
+                path = checked_audio(event, audio_dir)
+                state('recognizing', False)
+                began = time.monotonic()
+                try:
+                    text = transcribe_for_gate(stt, path, gate,
+                                               english_retry=not config.get('stt_worker'),
+                                               speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
+                                               japanese_confirmation=work_end.japanese and time.monotonic() < work_end.until)
+                finally:
+                    path.unlink(missing_ok=True)
+                stt_s = time.monotonic() - began
+                kind, question = gate.accept(text, time.monotonic())
             if WAKE.match(text) or KOREAN_WAKE.match(text):
                 indicator.show('blue')
             if kind != 'question':
@@ -276,7 +286,7 @@ def main():
                 continue
             indicator.show('yellow')
             state('answering', False)
-            receipt = {'input_kind':'microphone', 'wake_mode':'local_transcription_utterance_prefix',
+            receipt = {'input_kind':'google-home-matter' if external_end else 'microphone', 'wake_mode':'local_transcription_utterance_prefix',
                        'recognized_text':text, 'question':question, 'stt_s':stt_s,
                        'configured_voice':config.get('voice', 'Yuna'),
                        'speech_started_wall':event['speech_started_wall'],
@@ -304,14 +314,15 @@ def main():
                         if ending == 'execute':
                             result = jarvis_work_end.execute(config.get('work_end'))
                         else:
-                            result = {'status': ending, 'answer': jarvis_work_end.PROMPT if ending == 'prompt' else jarvis_work_end.CANCELLED}
+                            prompt = jarvis_work_end.GOOGLE_PROMPT if external_end else jarvis_work_end.PROMPT
+                            result = {'status': ending, 'answer': prompt if ending == 'prompt' else jarvis_work_end.CANCELLED}
                         receipt['work_end'] = result
                         pipeline = receipt['pipeline']
                         pipeline.update(route={'intent':'work_end'}, answer=result['answer'])
                         speech.submit(result['answer'])
                         speech.finish()
                         if ending == 'prompt':
-                            work_end.arm(time.monotonic(), time.time())
+                            work_end.arm(time.monotonic(), time.time(), japanese=external_end)
                     elif work:
                         require_indicator_release(indicator, speech, receipt)
                         result = jarvis_work_mode.execute(config.get('work_mode'))
