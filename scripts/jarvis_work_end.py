@@ -70,9 +70,5 @@ def execute(config, runner=subprocess.run):
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(step, steps))
     failed = [x['name'] for x in results if x['status'] not in {'brightness_verified', 'shutdown_requested'}]
-    shutdown_errors = [result['name'] for item, result in zip(steps, results)
-                       if item.get('kind') == 'shutdown' and result['status'] != 'shutdown_requested']
     answer = '작전 종료 절차를 시작합니다.'
-    if shutdown_errors:
-        answer += ' ' + '·'.join(shutdown_errors) + '는 종료 요청 결과를 확인하지 못했어요.'
     return {'status': 'partial' if failed else 'ok', 'answer': answer, 'steps': results}

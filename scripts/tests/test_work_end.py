@@ -52,7 +52,10 @@ class ConfirmationTests(unittest.TestCase):
         self.assertEqual('작전 종료 절차를 시작합니다.', result['answer'])
         self.assertNotIn('종료했', result['answer'])
         run = Mock(return_value=subprocess.CompletedProcess([], 255, '', ''))
-        self.assertEqual(end.execute(cfg, run)['status'], 'partial')
+        failed = end.execute(cfg, run)
+        self.assertEqual(failed['status'], 'partial')
+        self.assertEqual(failed['answer'], '작전 종료 절차를 시작합니다.')
+        self.assertEqual([step['status'] for step in failed['steps']], ['unverified'] * 4)
         self.assertEqual(end.execute({'steps': []}, run)['status'], 'unconfigured')
 
 
