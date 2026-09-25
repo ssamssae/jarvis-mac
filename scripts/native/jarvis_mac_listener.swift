@@ -37,6 +37,19 @@ struct AdaptiveVoiceGate {
     }
 }
 
+// Bounded recovery of an engine stopped by a device/configuration change.
+// The menu's explicit pause, shutdown and fatal controller errors stay final.
+struct MicrophoneRecovery {
+    private(set) var attempts = 0
+    mutating func shouldAttempt(running: Bool, authorized: Bool, paused: Bool,
+                               quitting: Bool, failed: Bool) -> Bool {
+        if running { attempts = 0; return false }
+        guard authorized, !paused, !quitting, !failed, attempts < 3 else { return false }
+        attempts += 1
+        return true
+    }
+}
+
 // Audio remains local. A single completed utterance is handed to the controller;
 // capture stays suspended until that controller explicitly acknowledges readiness.
 final class Listener: NSObject, NSApplicationDelegate {
@@ -54,6 +67,9 @@ final class Listener: NSObject, NSApplicationDelegate {
     private var manuallyPaused = false
     private var controllerReady = false
     private var microphoneReady = false
+    private var tapInstalled = false
+    private var microphoneRecovery = MicrophoneRecovery()
+    private var microphoneRecoveryCount = 0
     private var quitting = false
     private var terminating = false
     private var microphoneAuthorized = false
@@ -106,7 +122,10 @@ final class Listener: NSObject, NSApplicationDelegate {
         item.menu = menu
         status("준비 중")
         do { try launchController() } catch { fail("설정/컨트롤러 오류"); return }
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.writeStatus() }
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            self.recoverMicrophoneIfNeeded()
+            self.writeStatus()
+        }
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             DispatchQueue.main.async {
                 self.microphoneAuthorized = granted
@@ -131,6 +150,7 @@ final class Listener: NSObject, NSApplicationDelegate {
             "rms_db": latestRMS, "peak_db": latestPeak, "meter_updated_wall": meterUpdated,
             "voice_floor_db": voiceFloorDB, "voice_noise_margin_db": voiceNoiseMarginDB,
             "noise_db": latestNoiseDB, "voice_threshold_db": latestThresholdDB,
+            "microphone_recovery_count": microphoneRecoveryCount,
             "minimum_voice_seconds": minimumVoiceSeconds, "pre_roll_seconds": preRollSeconds]
         if let bytes = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
             let path = stateDir.appendingPathComponent("native-status.json")
@@ -163,7 +183,7 @@ final class Listener: NSObject, NSApplicationDelegate {
             setGate(false)
             engine.stop()
         } else if microphoneReady && fatalStatus == nil {
-            do { engine.prepare(); try engine.start() }
+            do { try rebuildMicrophone() }
             catch { fail("마이크 재시작 실패"); return }
         }
         updateCapture()
@@ -254,6 +274,40 @@ final class Listener: NSObject, NSApplicationDelegate {
         try process.run()
     }
 
+    private func recoverMicrophoneIfNeeded() {
+        guard microphoneRecovery.shouldAttempt(running: engine.isRunning,
+            authorized: microphoneAuthorized, paused: manuallyPaused,
+            quitting: quitting, failed: fatalStatus != nil) else {
+            if !engine.isRunning && microphoneAuthorized && !manuallyPaused && !quitting
+                && fatalStatus == nil && microphoneRecovery.attempts >= 3 {
+                fail("마이크 재연결 실패")
+            }
+            return
+        }
+        status("마이크 다시 연결 중")
+        do {
+            try rebuildMicrophone()
+            microphoneRecoveryCount += 1
+        } catch {
+            if microphoneRecovery.attempts >= 3 { fail("마이크 재연결 실패") }
+        }
+    }
+
+    private func rebuildMicrophone() throws {
+        setGate(false)
+        engine.stop()
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        microphoneReady = false
+        // Drain old-format buffers before replacing the sample rate and tap.
+        captureQueue.sync {
+            self.accepting = false
+            self.resetSegment()
+            self.voiceGate = AdaptiveVoiceGate()
+        }
+        engine.reset()
+        try startMicrophone()
+    }
+
     private func startMicrophone() throws {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -274,6 +328,7 @@ final class Listener: NSObject, NSApplicationDelegate {
                 self.consume(mono, ended: ended, epoch: epoch, eligible: eligible)
             }
         }
+        tapInstalled = true
         engine.prepare()
         if !manuallyPaused { try engine.start() }
         microphoneReady = true
