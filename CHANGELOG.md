@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.2.0 — 2026-09-26
+
+- Optional paired Matter adapters connect Google Nest to work-start, confirmed
+  work-end, and guided voice session input. Voice starter: `ボイススタート`.
+- Unified local `자비스 보이스 스타토` and Nest `ボイススタート` start commands;
+  the older local trigger remains compatible.
+- Engine then node selection, configured aliases, accumulated body and explicit
+  Enter delivery; continuation uses the local Mac microphone, not Nest audio.
+- Japanese work-end confirmation `はい` is accepted once after the spoken question
+  within 12 seconds. Cancel/expiry/restart retain the existing protections.
+- Fresh session delivery and display-only source metadata for compatible bridges;
+  no automatic resend on uncertain delivery.
+- Field verification includes user-confirmed Nest start/work-end and a fresh
+  Hermes Codex source card. WOL/shutdown requests do not prove physical power state.
+
+Source/installer packages only. Matter service, Google Home pairing/routines,
+voice model, engine login and private routing still require operator setup.
+
 ## v1.1.0 — 2026-09-24
 
 First packaged GitHub release of the experimental Mac voice assistant. Source and

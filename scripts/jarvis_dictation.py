@@ -40,8 +40,8 @@ class Dictation:
             return '음성 입력을 취소했습니다.'
         if self.selecting and time.monotonic() >= self.selection_until:
             self.cancel()
-            return '선택 시간이 지났어요. 자비스 음성 입력으로 다시 시작해 주세요.'
-        if key == '음성입력':
+            return '선택 시간이 지났어요. 자비스 보이스 스타토로 다시 시작해 주세요.'
+        if key in {'보이스스타토', '보이스스타트', '음성입력'}:
             self.cancel()
             self.selection_stage = 'engine'
             self.start_source = 'google-home-matter' if start_source == 'google-home-matter' else 'microphone'

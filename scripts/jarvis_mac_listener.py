@@ -226,7 +226,7 @@ def main():
             if external_end or external_dictation:
                 if dictation.target or dictation.selecting or time.monotonic() < work_end.until:
                     continue
-                text, kind, question, stt_s = '', 'question', '음성 입력' if external_dictation else '일 끝', 0
+                text, kind, question, stt_s = '', 'question', '보이스 스타토' if external_dictation else '일 끝', 0
                 gate.armed_until = 0
             else:
                 # Audio captured for an ended dictation must never become a new command.

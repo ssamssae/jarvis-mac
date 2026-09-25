@@ -1,5 +1,7 @@
 # Google Home work routine adapter
 
+한국어 첫 설정: [Matter 등록·수동 코드·루틴·문제 해결](../../docs/nest-matter-setup.md).
+
 This optional Matter plug is a momentary **work-start** button. An authenticated
 Matter ON command invokes the existing installed `jarvis_work_mode.execute()`;
 it does not duplicate brightness/Wake-on-LAN commands. An explicit Matter OFF
@@ -76,7 +78,7 @@ ON/OFF behavior. Duplicate starts are throttled and an active dictation or
 confirmation cannot be replaced by a new Matter start.
 
 After Google Home pairs the voice outlet, create a separate automation:
-Japanese starter `メモスタート` (spoken `OK Google、メモスタート`), action ON on
+Japanese starter `ボイススタート` (spoken `OK Google、ボイススタート`), action ON on
 **Jarvis Voice Input**, never the original work-start outlet. Verify the selected
 device in the editor before enabling. The automation invokes no work routine.
 If the voice node has not been paired, do not substitute the existing work
@@ -85,7 +87,7 @@ outlet or erase its pairing; onboarding remains pending. `voice_online` and
 flag alone does not prove that Google Home currently sees a device as online.
 
 Expected route: Nest recognizes the fixed starter → paired Matter ON → local
-listener says `어디로 연결할까요?` → Athena microphone / installed STT accepts
+listener says `어디로 연결할까요?` → local Mac microphone / installed STT accepts
 engine, node, body, and `엔터` using the existing guided input flow. Nest does not
 stream or transcribe the subsequent body into this adapter. `queued` means only
 IPC acceptance, not that the listener began or a session received text.
@@ -94,6 +96,6 @@ Verification: `npm test` covers the new endpoint, original endpoint number
 preservation, OFF/reset/restart and deduplication. Python inbox/listener tests
 cover start-only IPC, duplicate/busy protection and local-microphone continuation.
 These tests use mocked execution; real acceptance requires a fresh
-`last-turn.json` with `input_kind=google-home-matter`, `question=음성 입력`, a
+`last-turn.json` with `input_kind=google-home-matter`, `question=보이스 스타토`, a
 successful spoken prompt and live `selection_stage=engine`, plus a Google Home
 execution observation. Remote session delivery is a separate check.

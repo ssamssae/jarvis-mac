@@ -20,6 +20,14 @@ class DictationTest(unittest.TestCase):
                     self.assertEqual(d.target, (expected_node, expected_engine))
                     self.assertEqual(d.accept('원문 CASE 엔터')[1]['text'], '원문 CASE')
 
+    def test_voice_start_unified_invocation_preserves_body(self):
+        for trigger in ['보이스 스타토', '보이스스타토!', '보이스 스타트', '음성 입력']:
+            d = Dictation()
+            self.assertEqual(d.select(trigger), '어디로 연결할까요?')
+            d.select('코덱스'); d.select('노트북')
+            self.assertEqual(d.accept('보이스 스타토 음성임녀 엔터')[1]['text'], '보이스 스타토 음성임녀')
+        self.assertIsNone(Dictation().select('보이스 스타토가 뭐야'))
+
     def test_selection_reprompts_and_cancel(self):
         d = Dictation()
         self.assertIsNone(d.select('음성 입력 방법 알려줘'))
