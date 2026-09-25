@@ -36,16 +36,25 @@ class ListenerDictationTest(unittest.TestCase):
         self.check_flow(['자비스 음성 입력', '코덱스', '취소'],
                         ['armed', 'armed'], expected_delivery=False)
 
+    def test_native_worker_hints_follow_selection_and_stop_before_body(self):
+        self.check_flow(['자비스 음성 입력', '코덱스', '노트북', '승인', '', '엔터'],
+                        ['armed', 'armed', 'dictating', 'dictating', 'dictating'],
+                        guided=True, custom_worker=False)
+
     def test_timeout_before_prompt_started_cancels_selection(self):
         self.check_flow(['자비스 음성 입력'], [], prompt_timeout=True,
                         playback_started=False, expected_delivery=False)
 
     def check_flow(self, transcripts, expected_states, guided=False, prompt_timeout=False,
-                   playback_started=True, expected_delivery=True):
+                   playback_started=True, expected_delivery=True, custom_worker=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'config.json').write_text(json.dumps({'cast_name':'test', 'stt_worker':'test',
                                                        'dictation':{'argv':['test']}}))
+            if not custom_worker:
+                config = json.loads((root/'config.json').read_text())
+                config.pop('stt_worker')
+                (root/'config.json').write_text(json.dumps(config))
             cast = Mock(directory=directory, cast=None, startup_prepare_s=0,
                         startup_prepare_error=None)
             speech = Mock(first_playing=None, ack_first_playing=None, events=[])
@@ -88,6 +97,11 @@ class ListenerDictationTest(unittest.TestCase):
                  patch('builtins.print'):
                 listener.main()
             qa.assert_not_called()
+            contexts = [call.args[0].get('selection_context') for call in stt.send.call_args_list]
+            if not custom_worker:
+                self.assertEqual(contexts, [None, 'engine', 'node', None, None, None])
+            else:
+                self.assertTrue(all(context is None for context in contexts))
             if not expected_delivery:
                 self.assertEqual(requests, [])
                 self.assertEqual(final_states[0]['state'], 'listening')
