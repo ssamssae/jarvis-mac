@@ -145,3 +145,10 @@ For the approved hybrid route the expected card is “네스트로 시작 · 아
 `test_dictation_listener.py`, `test_dictation.py`, and the bridge repository's
 `test_voice_input_provenance.py`. Live acceptance requires a new received voice
 card with the original text intact; unit tests do not prove Telegram receipt.
+
+
+Fresh Codex conversations may have no session JSONL before their first input.
+After the normal empty-composer/approval checks, submit once and verify against the
+newly materialized session. The pending display receipt binds only when the
+viewer verifies the exact live pane PID and root session; another session or a
+prior user event cannot claim it. An unverified send is never automatically retried.

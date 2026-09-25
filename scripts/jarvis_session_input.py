@@ -72,7 +72,7 @@ def user_text_seen(mark, text, source=None):
             candidate = source()
             if candidate and Path(candidate) != path and Path(candidate).stat().st_mtime >= started-2:
                 path, before = Path(candidate), 0
-        if user_text_count(path.read_text(), text) > before:
+        if path is not None and user_text_count(path.read_text(), text) > before:
             return 'submitted'
         time.sleep(.2)
     return 'unverified'
@@ -110,17 +110,18 @@ def local_submit(root, request, probe=False):
             if not codex_composer_empty(ansi):
                 return 'composer_occupied'
             if not probe:
-                path = bridge.session_file_from_descendants(transport.pane_pid())
-                if not path: return 'unverified'
-                mark = transcript_mark(path)
+                pane_pid = transport.pane_pid()
+                path = bridge.session_file_from_descendants(pane_pid)
+                # A fresh /new conversation may not create its JSONL until the first input.
+                mark = transcript_mark(path) if path else (None, '')
                 # Metadata stays outside the model prompt. Old bridge installs still work.
                 try:
                     from voice_input_provenance import record_voice_input
                 except ImportError:
                     record_voice_input = None
                 try:
-                    provenance = record_voice_input(request, path) if record_voice_input else None
-                except OSError:
+                    provenance = record_voice_input(request, path, pane_pid=pane_pid) if record_voice_input else None
+                except (OSError, TypeError):
                     provenance = None  # Display metadata must not prevent dictation delivery.
                 try:
                     transport._paste_prompt_unlocked(text)

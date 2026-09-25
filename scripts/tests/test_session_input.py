@@ -36,7 +36,7 @@ class ProvenanceDeliveryTest(unittest.TestCase):
             marker = Path(directory)/'receipt.json'
             req = dict(id='123', node='macbook14', engine='codex', origin='microphone', text='승인')
             calls = []
-            def record(request, path):
+            def record(request, path, **kwargs):
                 calls.append('metadata')
                 self.assertEqual(request, req)
                 marker.write_text('{}')
@@ -59,3 +59,31 @@ class ProvenanceDeliveryTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError): adapter.local_submit(Path(directory), req)
             self.assertEqual(calls, ['metadata','paste'])
             self.assertFalse(marker.exists())
+
+class FreshSessionInputTest(unittest.TestCase):
+    def test_first_input_is_pasted_once_before_session_exists(self):
+        import contextlib
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)/'new.jsonl'
+            request = dict(id='123', node='macbook14', engine='codex', origin='microphone', text='first input')
+            pasted = []
+            recorded = []
+            def paste(text):
+                pasted.append(text)
+                session.write_text(json.dumps({'payload': {'role': 'user', 'content': text}})+'\n')
+            transport = SimpleNamespace(composer_lock=contextlib.nullcontext,
+                capture_visible_screen=lambda:'idle', tmux=lambda *args:SimpleNamespace(stdout='› '),
+                pane_pid=lambda:23, _paste_prompt_unlocked=paste)
+            bridge = SimpleNamespace(TmuxTransport=lambda config:transport,
+                parse_approval_prompt=lambda screen:None, parse_choice_prompt=lambda screen:None,
+                session_file_from_descendants=lambda pid:session if session.exists() else None)
+            def record(req, path, **kwargs):
+                recorded.append((path, kwargs['pane_pid'], list(pasted)))
+            with patch.object(adapter, 'load_bridge', return_value=bridge), patch.dict(sys.modules,
+                    {'voice_input_provenance':SimpleNamespace(record_voice_input=record)}):
+                self.assertEqual(adapter.local_submit(Path(directory), request), 'submitted')
+            self.assertEqual(pasted, ['first input'])
+            self.assertEqual(recorded, [(None, 23, [])])
