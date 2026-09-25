@@ -73,7 +73,7 @@ class ConfirmationTests(unittest.TestCase):
 
 
 class RoutingTests(unittest.TestCase):
-    def run_dialog(self, texts, speech_error=False, google=False):
+    def run_dialog(self, texts, speech_error=False, google=False, expected_languages=None, window=8, start_expected=0):
         import jarvis_mac_listener as app
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); (root / 'audio').mkdir()
@@ -86,18 +86,46 @@ class RoutingTests(unittest.TestCase):
                         continue
                     clip = root / 'audio' / f'{i}.wav'; clip.write_bytes(b'x'*44)
                     now = time.time()
-                    yield json.dumps({'wav': str(clip), 'speech_started_wall': now - 3 if i == 0 else now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
+                    command_audio = i == 0 or (expected_languages and expected_languages[i] == 'ja')
+                    yield json.dumps({'wav': str(clip), 'speech_started_wall': now - 3 if command_audio else now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
             stt = MagicMock(); stt.read.side_effect = [x if isinstance(x, Exception) else {'text': x} for x in (texts[1:] if google else texts)]
             home = MagicMock(); home.plan.return_value = None
             speech = MagicMock(); speech.first_playing = None; speech.ack_first_playing = None; speech.events = []
             if speech_error: speech.finish.side_effect = RuntimeError('speaker_failed')
             indicator = MagicMock(); indicator.release.return_value = True
-            with patch.object(sys, 'argv', ['listener', '--state-dir', str(root)]), patch.object(sys, 'stdin', events()), patch.object(sys, 'stdout', io.StringIO()), patch.object(app.signal, 'signal'), patch.object(app, 'SmartHome', return_value=home), patch.object(app, 'JSONWorker', return_value=stt), patch.object(app, 'CastOutput'), patch.object(app, 'SpeechQueue', return_value=speech), patch.object(app, 'StatusLight', return_value=indicator), patch.object(app, 'CursorQA') as qa, patch.object(app.jarvis_work_end, 'execute', return_value={'status': 'ok', 'answer': '종료를 요청했어요.'}) as execute:
+            with patch.object(app, 'WakeGate', return_value=app.WakeGate(window=window)), patch.object(app.jarvis_work_mode, 'execute', return_value={'status':'ok','answer':'시작 요청'}) as start_work, patch.object(sys, 'argv', ['listener', '--state-dir', str(root)]), patch.object(sys, 'stdin', events()), patch.object(sys, 'stdout', io.StringIO()), patch.object(app.signal, 'signal'), patch.object(app, 'SmartHome', return_value=home), patch.object(app, 'JSONWorker', return_value=stt), patch.object(app, 'CastOutput'), patch.object(app, 'SpeechQueue', return_value=speech), patch.object(app, 'StatusLight', return_value=indicator), patch.object(app, 'CursorQA') as qa, patch.object(app.jarvis_work_end, 'execute', return_value={'status': 'ok', 'answer': '종료를 요청했어요.'}) as execute:
                 app.main()
             qa.assert_not_called(); home.execute.assert_not_called()
+            self.assertEqual(start_work.call_count, start_expected)
             if google and len(texts) > 1 and not speech_error:
                 self.assertEqual(stt.send.call_args_list[0].args[0].get('language'), 'ja')
+            if expected_languages is not None:
+                self.assertEqual([call.args[0].get('language') for call in stt.send.call_args_list], expected_languages)
             return execute.call_count
+
+    def test_explicit_japanese_trigger_returns_to_korean_confirmation(self):
+        for yes in ['예', '네']:
+            self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり', yes, yes],
+                                            expected_languages=[None, 'ja', None, None]), 1)
+        self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり', '하이', '예'],
+                                        expected_languages=[None, 'ja', None, None]), 0)
+        self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり', 'はい', '예'],
+                                        expected_languages=[None, 'ja', None, None]), 0)
+
+    def test_japanese_mode_start_and_expiry(self):
+        self.assertEqual(self.run_dialog(['자비스 일본어', '仕事スタート'],
+                                        expected_languages=[None, 'ja'], start_expected=1), 0)
+        self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり'], window=0,
+                                        expected_languages=[None, None]), 0)
+
+    def test_japanese_trigger_is_wake_qualified_and_one_utterance(self):
+        self.assertEqual(self.run_dialog(['일본어', '仕事終わり'], expected_languages=[None, None]), 0)
+        self.assertEqual(self.run_dialog(['자비스', '일본어', '仕事終わり', '아니요'],
+                                        expected_languages=[None, None, 'ja', None]), 0)
+        self.assertEqual(self.run_dialog(['자비스 일본어', '今日の天気', '仕事終わり'],
+                                        expected_languages=[None, 'ja', None]), 0)
+        self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり'], speech_error=True,
+                                        expected_languages=[None, None]), 0)
 
     def test_google_request_only_arms_and_hai_executes_once(self):
         self.assertEqual(self.run_dialog(['request'], google=True), 0)

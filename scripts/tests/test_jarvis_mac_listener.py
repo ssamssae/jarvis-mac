@@ -11,6 +11,17 @@ from unittest.mock import MagicMock, patch
 
 
 class EnglishWakeRetryTests(unittest.TestCase):
+    def test_explicit_japanese_command_uses_one_japanese_decode(self):
+        stt = MagicMock(); stt.read.return_value = {'text':'仕事終わり'}
+        result = transcribe_for_gate(stt, Path('/example.wav'), WakeGate(), japanese_command=True)
+        self.assertEqual(result, '仕事終わり')
+        stt.send.assert_called_once_with({'wav':'/example.wav', 'language':'ja'})
+
+    def test_tiny_japanese_command_noise_cannot_start_work(self):
+        stt = MagicMock(); stt.read.return_value = {'text':'仕事スタート'}
+        self.assertEqual(transcribe_for_gate(stt, Path('/example.wav'), WakeGate(),
+                                           japanese_command=True, speech_seconds=.2), '')
+
     def test_selection_hint_only_on_selected_request_and_no_wake_retry(self):
         stt = MagicMock()
         stt.read.return_value = {'text': '커서'}
