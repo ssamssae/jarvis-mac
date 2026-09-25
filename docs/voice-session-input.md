@@ -152,3 +152,9 @@ After the normal empty-composer/approval checks, submit once and verify against 
 newly materialized session. The pending display receipt binds only when the
 viewer verifies the exact live pane PID and root session; another session or a
 prior user event cannot claim it. An unverified send is never automatically retried.
+
+The receiver binds a first-input receipt as soon as its live pane's new session
+is resolved. This preserves the display proof after the session file descriptor
+closes. On an EOF attach the viewer recovers only a matched voice input card,
+including completed first turns, and persists a per-event display key to prevent
+duplicates. Ordinary historical user messages are not echoed by this recovery.

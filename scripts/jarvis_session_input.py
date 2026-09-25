@@ -129,7 +129,18 @@ def local_submit(root, request, probe=False):
                     if provenance is not None:
                         provenance.unlink(missing_ok=True)
                     raise
-        return 'ready' if probe else user_text_seen(mark, text, lambda: bridge.session_file_from_descendants(transport.pane_pid()))
+        if probe:
+            return 'ready'
+        def source():
+            candidate = bridge.session_file_from_descendants(pane_pid)
+            if candidate and provenance is not None:
+                try:
+                    from voice_input_provenance import bind_voice_input_session
+                    bind_voice_input_session(provenance, candidate)
+                except (ImportError, OSError, ValueError, TypeError):
+                    pass  # Display metadata must not change delivery or cause a resend.
+            return candidate
+        return user_text_seen(mark, text, source)
     if engine == 'cursor':
         with bridge.composer_lock():
             screen = bridge._tui_capture_pane()
