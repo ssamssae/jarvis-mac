@@ -87,7 +87,7 @@ class RoutingTests(unittest.TestCase):
                     clip = root / 'audio' / f'{i}.wav'; clip.write_bytes(b'x'*44)
                     now = time.time()
                     yield json.dumps({'wav': str(clip), 'speech_started_wall': now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
-            stt = MagicMock(); stt.read.side_effect = [{'text': x} for x in (texts[1:] if google else texts)]
+            stt = MagicMock(); stt.read.side_effect = [x if isinstance(x, Exception) else {'text': x} for x in (texts[1:] if google else texts)]
             home = MagicMock(); home.plan.return_value = None
             speech = MagicMock(); speech.first_playing = None; speech.ack_first_playing = None; speech.events = []
             if speech_error: speech.finish.side_effect = RuntimeError('speaker_failed')
@@ -104,6 +104,9 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.run_dialog(['request', 'はい', 'はい'], google=True), 1)
         self.assertEqual(self.run_dialog(['request', 'いいえ', 'はい'], google=True), 0)
         self.assertEqual(self.run_dialog(['request', 'はい'], google=True, speech_error=True), 0)
+
+    def test_stt_error_cancels_confirmation_and_listener_accepts_next_wake(self):
+        self.assertEqual(self.run_dialog(['request', RuntimeError('local_transcription_failed'), 'はい', '자비스 취소'], google=True), 0)
 
     def test_observed_shortened_end_routes_to_prompt_without_execution(self):
         self.assertEqual(self.run_dialog(['자비스', '끝!', '아니요']), 0)

@@ -14,13 +14,13 @@ class WhisperWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); model,wav,binary=self.fixture(root)
             binary.write_text('#!'+sys.executable+'\nimport sys,pathlib\na=sys.argv\npathlib.Path(a[a.index("-of")+1]+".txt").write_text(a[a.index("-l")+1])\n')
-            requests = [{'wav':str(wav),'language':'en'}, {'wav':str(wav)},
+            requests = [{'wav':str(wav),'language':'en'}, {'wav':str(wav),'language':'ja'}, {'wav':str(wav)},
                         {'wav':str(wav),'language':'invalid'}, {'wav':str(wav)}]
             result = subprocess.run(worker.worker_command({'model':str(model),'whisper_cli':str(binary)}),
                 input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True,text=True,timeout=5)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual([json.loads(line) for line in result.stdout.splitlines()],
-                [{'ready':True},{'text':'en'},{'text':'ko'},
+                [{'ready':True},{'text':'en'},{'text':'ja'},{'text':'ko'},
                  {'error':'local_transcription_failed'},{'text':'ko'}])
 
     def fixture(self, root):
