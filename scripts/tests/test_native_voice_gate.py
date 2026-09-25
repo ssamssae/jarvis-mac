@@ -50,6 +50,17 @@ for _ in 0..<12 {
 }
 require(!feed(&conversation, Array(repeating: -42.0, count: 50)).contains(true), "question endpoint")
 require(!conversation.isVoiced(db: .nan, seconds: 0.02), "invalid level")
+var recovery = MicrophoneRecovery()
+require(!recovery.shouldAttempt(running: false, authorized: false, paused: false, quitting: false, failed: false), "no permission must not start capture")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: true, quitting: false, failed: false), "manual pause stays paused")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: true, failed: false), "quit stays quit")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: true), "fatal controller failure stays stopped")
+for _ in 0..<3 {
+    require(recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "device-stop recovery")
+}
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "retry budget is bounded")
+require(!recovery.shouldAttempt(running: true, authorized: true, paused: false, quitting: false, failed: false), "running engine is untouched")
+require(recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "later independent device change recovers")
 print("native voice gate regressions passed")
 """
         with tempfile.TemporaryDirectory() as directory:
