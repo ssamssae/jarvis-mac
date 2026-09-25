@@ -23,7 +23,7 @@ node server.mjs
 
 State defaults to `~/Library/Application Support/JarvisGoogleHome`; override with
 `JARVIS_MATTER_STATE`. Pairing credentials and Matter fabric keys stay in this
-private directory. Never commit or print `pairing.json` or Matter storage. There
+private directory. Never commit or print `pairing.json`, `voice-pairing.json`, or Matter storage. There
 is no HTTP command endpoint, shell input, or public tunnel. Only a paired Matter
 controller can send a network command.
 
@@ -67,19 +67,22 @@ References: [Google Matter pairing](https://developers.home.google.com/matter/in
 
 ## Nest starts voice input; Athena captures everything afterward (T-260925-041)
 
-The same paired server exposes an additional bridged momentary outlet named
-`Jarvis Voice Input`. Existing work-start endpoint IDs and Matter storage stay
-unchanged. ON on the voice outlet sends only `dictation_start` to the owner-only
+A separate Matter node on UDP 5541 exposes a momentary outlet named
+`Jarvis Voice Input`. Pair it separately in the mobile Google Home app using
+private `voice-pairing.json`. The original work node stays on UDP 5540 with its
+existing endpoint topology and pairing storage unchanged. ON on the voice outlet sends only `dictation_start` to the owner-only
 local socket; OFF/reset/restart do nothing. The original work outlet retains its
 ON/OFF behavior. Duplicate starts are throttled and an active dictation or
 confirmation cannot be replaced by a new Matter start.
 
-After Google Home discovers the voice outlet, create a separate automation:
+After Google Home pairs the voice outlet, create a separate automation:
 Japanese starter `メモスタート` (spoken `OK Google、メモスタート`), action ON on
 **Jarvis Voice Input**, never the original work-start outlet. Verify the selected
 device in the editor before enabling. The automation invokes no work routine.
-If Google Home has not discovered the added endpoint, do not substitute the
-existing work outlet or erase its pairing; discovery/onboarding remains pending.
+If the voice node has not been paired, do not substitute the existing work
+outlet or erase its pairing; onboarding remains pending. `voice_online` and
+`voice_commissioned` in status.json track the new node separately. A commissioned
+flag alone does not prove that Google Home currently sees a device as online.
 
 Expected route: Nest recognizes the fixed starter → paired Matter ON → local
 listener says `어디로 연결할까요?` → Athena microphone / installed STT accepts
