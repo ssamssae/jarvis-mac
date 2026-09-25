@@ -10,7 +10,7 @@ user text, not a permission decision made by this router.
 
 With microphone permission, the listener running, and `dictation.argv` configured:
 
-1. Say `자비스`, wait for its cue, then say `음성 입력` (or `자비스 음성 입력`).
+1. Say `자비스`, wait for its cue, then say `보이스 스타토` (or `자비스 보이스 스타토`).
 2. Jarvis asks `어디로 연결할까요?`. Say `코덱스`, `커서`, or `그록`.
 3. Jarvis asks `어떤 노드인가요?`. Say `헤르메스` or `노트북` for macbook14,
    `아테나` for mac, or `볼칸` for macmini.
@@ -21,7 +21,7 @@ English engine names Codex/Cursor/Grok are accepted. Unknown selection replies
 repeat the current options instead of entering conversation or controlling devices.
 Say `취소` during selection to return to wake listening. Each selection reply has
 30 seconds after its prompt; an expired reply cancels selection without dispatch.
-`음성 입력` during selection starts again from the engine question.
+`보이스 스타토` during selection starts again from the engine question.
 
 A Cast playback timeout after a selection/dictation prompt has demonstrably
 started preserves that state; it does not resend audio or input. A timeout before
