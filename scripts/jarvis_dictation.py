@@ -3,11 +3,12 @@ import re
 import json
 import subprocess
 import uuid
+import time
 
 # Only observed standalone target aliases; do not fuzzy-match dictated content.
-NODES = {'헤르메스': 'macbook14', '헬멧스': 'macbook14', 'hermes': 'macbook14', '아테나': 'mac', '아테느': 'mac',
+NODES = {'헤르메스': 'macbook14', '노트북': 'macbook14', '헬멧스': 'macbook14', 'hermes': 'macbook14', '아테나': 'mac', '아테느': 'mac',
          '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini'}
-ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', '커서': 'cursor'}
+ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', 'grok': 'grok', '커서': 'cursor', 'cursor': 'cursor'}
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')
 END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
 
@@ -17,6 +18,49 @@ class Dictation:
         self.target = None
         self.parts = []
         self.request_id = None
+        self.selection_stage = None
+        self.selection_engine = None
+        self.selection_until = 0.0
+
+    @property
+    def selecting(self):
+        return self.selection_stage is not None
+
+    def arm_selection(self):
+        # Start the reply window after the spoken prompt, not during playback.
+        if self.selecting:
+            self.selection_until = time.monotonic() + 30
+
+    def select(self, text, *, cancelled=False):
+        key = re.sub(r'[\s,.!?。！？]', '', text).lower()
+        if self.selecting and cancelled:
+            self.cancel()
+            return '음성 입력을 취소했습니다.'
+        if self.selecting and time.monotonic() >= self.selection_until:
+            self.cancel()
+            return '선택 시간이 지났어요. 자비스 음성 입력으로 다시 시작해 주세요.'
+        if key == '음성입력':
+            self.cancel()
+            self.selection_stage = 'engine'
+            self.arm_selection()
+            return '어디로 연결할까요?'
+        if self.selection_stage == 'engine':
+            engine = ENGINES.get(key)
+            if engine is None:
+                return '코덱스, 커서, 그록 중 어디로 연결할까요?'
+            self.selection_engine = engine
+            self.selection_stage = 'node'
+            return '어떤 노드인가요?'
+        if self.selection_stage == 'node':
+            node = NODES.get(key)
+            if node is None:
+                return '헤르메스 또는 노트북, 아테나, 볼칸 중 어떤 노드인가요?'
+            engine = self.selection_engine
+            self.cancel()
+            self.target = (node, engine)
+            self.request_id = str(uuid.uuid4())
+            return '말씀하세요.'
+        return None
 
     def start(self, text):
         match = START.fullmatch(text.lower())
@@ -31,6 +75,9 @@ class Dictation:
         self.target = None
         self.parts = []
         self.request_id = None
+        self.selection_stage = None
+        self.selection_engine = None
+        self.selection_until = 0.0
 
     def accept(self, text):
         if not self.target:

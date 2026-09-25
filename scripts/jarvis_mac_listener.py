@@ -222,7 +222,7 @@ def main():
         for event in control_events(sys.stdin, root):
             external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
             if external_end:
-                if dictation.target or time.monotonic() < work_end.until:
+                if dictation.target or dictation.selecting or time.monotonic() < work_end.until:
                     continue
                 text, kind, question, stt_s = '', 'question', '일 끝', 0
                 gate.armed_until = 0
@@ -240,7 +240,7 @@ def main():
                 began = time.monotonic()
                 try:
                     text = transcribe_for_gate(stt, path, gate,
-                                               english_retry=not config.get('stt_worker'),
+                                               english_retry=not config.get('stt_worker') and not dictation.selecting,
                                                speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
                                                japanese_confirmation=not dictation.target and work_end.japanese and time.monotonic() < work_end.until)
                 except (RuntimeError, KeyError, ValueError, OSError) as exc:
@@ -304,7 +304,11 @@ def main():
                     state('dictating' if dictation.target else 'listening', True,
                           dictation_id=dictation.request_id or '')
                     continue
-                kind, question = gate.accept(text, time.monotonic())
+                if dictation.selecting:
+                    # Selection replies stay local, even when unknown or expired.
+                    kind, question = 'question', text
+                else:
+                    kind, question = gate.accept(text, time.monotonic())
             if WAKE.match(text) or KOREAN_WAKE.match(text):
                 indicator.show('blue')
             if kind != 'question':
@@ -373,16 +377,20 @@ def main():
                     # same queue serializes this sound before the eventual answer,
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
-                    plan = home.plan(question)
-                    ending = work_end.accept(question, time.monotonic(), event['speech_started_wall'])
-                    work = jarvis_work_mode.matches(question)
-                    weather = weather_reply(question, config.get('weather')) if plan is None and not work and ending is None else None
-                    if dictation.start(question):
+                    selection_answer = dictation.select(question, cancelled=is_cancel(question))
+                    dictation_control = selection_answer is not None or dictation.start(question)
+                    plan = home.plan(question) if not dictation_control else None
+                    ending = work_end.accept(question, time.monotonic(), event['speech_started_wall']) if not dictation_control else None
+                    work = jarvis_work_mode.matches(question) if not dictation_control else False
+                    weather = weather_reply(question, config.get('weather')) if not dictation_control and plan is None and not work and ending is None else None
+                    if dictation_control:
+                        gate.armed_until = 0
+                        work_end.cancel()
                         if not config.get('dictation', {}).get('argv'):
                             dictation.cancel()
                             answer = '음성 입력 연결이 아직 설정되지 않았어요.'
                         else:
-                            answer = '말씀하세요.'
+                            answer = selection_answer or '말씀하세요.'
                         pipeline = receipt['pipeline']
                         pipeline.update(route={'intent':'dictation'}, answer=answer)
                         speech.submit(answer)
@@ -441,7 +449,16 @@ def main():
                 # No replay/retry within a turn: reconnect only on the next question.
                 cast_session.invalidate()
                 work_end.cancel()
-                dictation.cancel()
+                # A missing Cast FINISHED event after prompt playback started
+                # must not silently discard the chosen target or selection.
+                prompt_started_timeout = (
+                    str(exc) == 'cast_playback_timeout' and speech is not None
+                    and speech.first_playing is not None
+                    and receipt['pipeline'].get('route', {}).get('intent') == 'dictation')
+                if not prompt_started_timeout:
+                    dictation.cancel()
+                else:
+                    receipt['dictation_preserved_after_prompt_timeout'] = True
                 receipt['result'] = 'error'
                 # Avoid raw provider output, credentials, or unrelated source paths.
                 receipt['error_type'] = type(exc).__name__
@@ -477,7 +494,12 @@ def main():
                 indicator.show('green', ttl=remaining)
             if dictation.target:
                 indicator.show('green', ttl=0)
-            state('dictating' if dictation.target else ('armed' if remaining else 'listening'), True, dictation_id=dictation.request_id or '', armed_seconds=remaining, last_result=receipt['result'])
+            if dictation.selecting:
+                dictation.arm_selection()
+                indicator.show('green', ttl=30)
+            state('dictating' if dictation.target else ('armed' if remaining or dictation.selecting else 'listening'), True,
+                  dictation_id=dictation.request_id or '', selection_stage=dictation.selection_stage,
+                  armed_seconds=30 if dictation.selecting else remaining, last_result=receipt['result'])
     except (KeyboardInterrupt, BrokenPipeError):
         pass
     finally:
