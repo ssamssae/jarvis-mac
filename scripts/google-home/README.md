@@ -63,3 +63,34 @@ receipt plus observed device results. Never report local tests as voice success.
 
 References: [Google Matter pairing](https://developers.home.google.com/matter/integration/pair),
 [matter.js](https://github.com/matter-js/matter.js).
+
+
+## Nest starts voice input; Athena captures everything afterward (T-260925-041)
+
+The same paired server exposes an additional bridged momentary outlet named
+`Jarvis Voice Input`. Existing work-start endpoint IDs and Matter storage stay
+unchanged. ON on the voice outlet sends only `dictation_start` to the owner-only
+local socket; OFF/reset/restart do nothing. The original work outlet retains its
+ON/OFF behavior. Duplicate starts are throttled and an active dictation or
+confirmation cannot be replaced by a new Matter start.
+
+After Google Home discovers the voice outlet, create a separate automation:
+Japanese starter `メモスタート` (spoken `OK Google、メモスタート`), action ON on
+**Jarvis Voice Input**, never the original work-start outlet. Verify the selected
+device in the editor before enabling. The automation invokes no work routine.
+If Google Home has not discovered the added endpoint, do not substitute the
+existing work outlet or erase its pairing; discovery/onboarding remains pending.
+
+Expected route: Nest recognizes the fixed starter → paired Matter ON → local
+listener says `어디로 연결할까요?` → Athena microphone / installed STT accepts
+engine, node, body, and `엔터` using the existing guided input flow. Nest does not
+stream or transcribe the subsequent body into this adapter. `queued` means only
+IPC acceptance, not that the listener began or a session received text.
+
+Verification: `npm test` covers the new endpoint, original endpoint number
+preservation, OFF/reset/restart and deduplication. Python inbox/listener tests
+cover start-only IPC, duplicate/busy protection and local-microphone continuation.
+These tests use mocked execution; real acceptance requires a fresh
+`last-turn.json` with `input_kind=google-home-matter`, `question=음성 입력`, a
+successful spoken prompt and live `selection_stage=engine`, plus a Google Home
+execution observation. Remote session delivery is a separate check.

@@ -1,6 +1,8 @@
 import { Endpoint, Environment, Logger, ServerNode, VendorId } from '@matter/main';
 import { OnOffPlugInUnitDevice } from '@matter/main/devices/on-off-plug-in-unit';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
+import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors/bridged-device-basic-information';
+import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -12,7 +14,7 @@ import { StartGate } from './start_gate.mjs';
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 
-export async function createStartNode({ storage, run, requestEnd = async () => {}, id = 'jarvis-work-start', port = 5540 }) {
+export async function createStartNode({ storage, run, requestEnd = async () => {}, requestInput, id = 'jarvis-work-start', port = 5540 }) {
     Logger.level = 'error'; // Pairing credentials must never enter service logs.
     Environment.default.vars.set('storage.path', storage);
     const node = await ServerNode.create({
@@ -48,7 +50,29 @@ export async function createStartNode({ storage, run, requestEnd = async () => {
             console.error('work_start_failed');
         }).finally(async () => { await button.set({ onOff: { onOff: false } }); });
     });
-    return { node, button, idle: () => Promise.all([pending, endPending]) };
+    let inputButton, inputPending = Promise.resolve();
+    if (requestInput) {
+        // Keep the original endpoint ID/number and pairing storage intact.
+        const bridge = new Endpoint(AggregatorEndpoint, { id: 'voice-input-bridge' });
+        await node.add(bridge);
+        inputButton = new Endpoint(OnOffPlugInUnitDevice.with(BridgedDeviceBasicInformationServer), {
+            id: 'voice-input',
+            bridgedDeviceBasicInformation: {
+                nodeLabel: 'Jarvis Voice Input', productName: 'Jarvis Voice Input',
+                serialNumber: 'jarvis-voice-input-1', uniqueId: 'jarvis-voice-input-1', reachable: true,
+            },
+        });
+        await bridge.add(inputButton);
+        await inputButton.set({ onOff: { onOff: false } });
+        const inputGate = new StartGate(requestInput, { cooldownMs: 15000 });
+        inputButton.events.onOff.onOff$Changed.on(value => {
+            if (!value) return;
+            inputPending = inputGate.accept(true).catch(() => {
+                console.error('dictation_start_failed');
+            }).finally(async () => { await inputButton.set({ onOff: { onOff: false } }); });
+        });
+    }
+    return { node, button, inputButton, idle: () => Promise.all([pending, endPending, inputPending]) };
 }
 
 async function main() {
@@ -60,6 +84,7 @@ async function main() {
         storage: join(state, 'matter'),
         run: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'run_work_start.py'), '--state-dir', jarvisState, '--receipt-dir', state], { timeout: 25000, maxBuffer: 4096 }),
         requestEnd: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'request_work_end.py'), '--state-dir', jarvisState], { timeout: 4000, maxBuffer: 4096 }),
+        requestInput: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'request_dictation.py'), '--state-dir', jarvisState], { timeout: 4000, maxBuffer: 4096 }),
     });
     await writeFile(join(state, 'pairing.json'), JSON.stringify(node.state.commissioning.pairingCodes), { mode: 0o600 });
     const status = () => writeFile(join(state, 'status.json'), JSON.stringify({ pid: process.pid, online: node.lifecycle.isOnline, commissioned: node.state.commissioning.commissioned, updated_at: Date.now() }), { mode: 0o600 });

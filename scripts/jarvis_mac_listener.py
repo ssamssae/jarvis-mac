@@ -222,10 +222,11 @@ def main():
               startup_prepare_error=cast_session.startup_prepare_error)
         for event in control_events(sys.stdin, root):
             external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
-            if external_end:
+            external_dictation = event.get('source') == 'google-home-matter' and event.get('intent') == 'dictation_start'
+            if external_end or external_dictation:
                 if dictation.target or dictation.selecting or time.monotonic() < work_end.until:
                     continue
-                text, kind, question, stt_s = '', 'question', '일 끝', 0
+                text, kind, question, stt_s = '', 'question', '음성 입력' if external_dictation else '일 끝', 0
                 gate.armed_until = 0
             else:
                 # Audio captured for an ended dictation must never become a new command.
@@ -360,7 +361,7 @@ def main():
                 continue
             indicator.show('yellow')
             state('answering', False)
-            receipt = {'input_kind':'google-home-matter' if external_end else 'microphone', 'wake_mode':'local_transcription_utterance_prefix',
+            receipt = {'input_kind':'google-home-matter' if external_end or external_dictation else 'microphone', 'wake_mode':'local_transcription_utterance_prefix',
                        'recognized_text':text, 'question':question, 'stt_s':stt_s,
                        'configured_voice':config.get('voice', 'Yuna'),
                        'speech_started_wall':event['speech_started_wall'],
