@@ -28,10 +28,10 @@ class ConfirmationTests(unittest.TestCase):
     def test_request_never_executes_and_bare_yes_never_executes(self):
         c = end.Confirmation()
         self.assertIsNone(c.accept('예', 1, 1))
-        self.assertEqual(c.accept('일 끝', 2, 2), 'prompt')
-        self.assertEqual(c.accept('끝!', 2, 2), 'prompt')
+        for word in ['시고토 오와리', '시고토오와리!', 'しごとおわり', 'しごと終わり', '仕事 終わり']:
+            self.assertEqual(c.accept(word, 2, 2), 'prompt')
         self.assertIsNone(c.accept('예', 3, 3))  # arm only after successful question playback
-        for word in ['일 끝내지마', '일 끝이라고 말해', '일 끝 예', '끝내지마', '회의 끝', '끝 예']:
+        for word in ['일 끝', '끝!', '시고토 오와리 하지마', '시고토 오와리 예', '시고토 오와리라고 말해', '일 끝내지마', '일 끝이라고 말해', '일 끝 예', '끝내지마', '회의 끝', '끝 예']:
             self.assertIsNone(c.accept(word, 3, 3))
 
     def test_yes_once_only_after_prompt_and_before_deadline(self):
@@ -86,7 +86,7 @@ class RoutingTests(unittest.TestCase):
                         continue
                     clip = root / 'audio' / f'{i}.wav'; clip.write_bytes(b'x'*44)
                     now = time.time()
-                    yield json.dumps({'wav': str(clip), 'speech_started_wall': now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
+                    yield json.dumps({'wav': str(clip), 'speech_started_wall': now - 3 if i == 0 else now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
             stt = MagicMock(); stt.read.side_effect = [x if isinstance(x, Exception) else {'text': x} for x in (texts[1:] if google else texts)]
             home = MagicMock(); home.plan.return_value = None
             speech = MagicMock(); speech.first_playing = None; speech.ack_first_playing = None; speech.events = []
@@ -108,16 +108,16 @@ class RoutingTests(unittest.TestCase):
     def test_stt_error_cancels_confirmation_and_listener_accepts_next_wake(self):
         self.assertEqual(self.run_dialog(['request', RuntimeError('local_transcription_failed'), 'はい', '자비스 취소'], google=True), 0)
 
-    def test_observed_shortened_end_routes_to_prompt_without_execution(self):
-        self.assertEqual(self.run_dialog(['자비스', '끝!', '아니요']), 0)
+    def test_separate_wake_and_end_routes_to_prompt_without_execution(self):
+        self.assertEqual(self.run_dialog(['자비스', '시고토 오와리!', '아니요']), 0)
 
     def test_confirmed_followup_executes_once(self):
-        self.assertEqual(self.run_dialog(['자비스 일 끝', '예', '예']), 1)
+        self.assertEqual(self.run_dialog(['자비스 시고토 오와리', '예', '예']), 1)
 
     def test_standalone_cancel_and_observed_transcription_never_call_model(self):
         self.assertEqual(self.run_dialog(['자비스 취소']), 0)
         self.assertEqual(self.run_dialog(['자비스 치솔 치솔']), 0)
 
     def test_cancel_and_failed_prompt_cannot_execute(self):
-        self.assertEqual(self.run_dialog(['자비스 일 끝', '아니요', '예']), 0)
-        self.assertEqual(self.run_dialog(['자비스 일 끝', '예'], speech_error=True), 0)
+        self.assertEqual(self.run_dialog(['자비스 시고토 오와리', '아니요', '예']), 0)
+        self.assertEqual(self.run_dialog(['자비스 시고토 오와리', '예'], speech_error=True), 0)

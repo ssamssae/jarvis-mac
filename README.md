@@ -269,7 +269,7 @@ change; externally changed fields are preserved. Unsupported bulbs remain unconf
 
 ### Optional work-start routine
 
-“일하자”, “일 시작하자”, or “작업 시작하자” can execute a private `work_mode.steps`
+After the unchanged “자비스” wake phrase, “시고토 스타토” can execute a private `work_mode.steps`
 list (up to four trusted local command argument arrays). Configure each step with
 `name`, `kind` (`brightness` or `wake`), and `argv`. Brightness helpers must return
 verified JSON for level 6 of 16. Wake steps require a nonempty `success_marker`
@@ -283,7 +283,7 @@ remain in local configuration. User display auto-brightness policy is unchanged.
 
 ### Confirmed work-end routine
 
-“일 끝” asks whether to lower both Mac displays to level 0 and normally shut down
+“시고토 오와리” after the wake phrase asks whether to lower both Mac displays to level 0 and normally shut down
 both configured Windows PCs. No action runs until a fresh “예” or “네” is recognized
 within 12 seconds after the spoken question finishes. Any other answer cancels;
 timeout, failed question playback, process restart, early audio, and repeated yes
@@ -301,8 +301,11 @@ for every room or microphone. Clips shorter than two seconds receive 350 ms lead
 and one second trailing silence before local transcription; the speech bytes are
 preserved. Language and model are unchanged, and no wake-word prompt is injected.
 
-“끝” alone, after the wake gate, also asks the work-end confirmation because it was
-observed as a shortened transcription of “일 끝”. It never shuts down immediately.
+Work commands accept exact Korean phonetic or Japanese spellings, with spaces and
+punctuation ignored. The old “일하자”, “일 끝”, and “끝” commands are retired.
+The wake phrase itself is unchanged. Google Home retains its existing unprefixed
+Japanese starters; the app commands are “자비스, 시고토 스타토” and
+“자비스, 시고토 오와리”.
 Cancellation and observed cancellation-only transcription variants are handled
 locally, including outside the confirmation window. They cannot grant execution.
 
