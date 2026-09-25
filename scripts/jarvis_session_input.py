@@ -113,7 +113,21 @@ def local_submit(root, request, probe=False):
                 path = bridge.session_file_from_descendants(transport.pane_pid())
                 if not path: return 'unverified'
                 mark = transcript_mark(path)
-                transport._paste_prompt_unlocked(text)
+                # Metadata stays outside the model prompt. Old bridge installs still work.
+                try:
+                    from voice_input_provenance import record_voice_input
+                except ImportError:
+                    record_voice_input = None
+                try:
+                    provenance = record_voice_input(request, path) if record_voice_input else None
+                except OSError:
+                    provenance = None  # Display metadata must not prevent dictation delivery.
+                try:
+                    transport._paste_prompt_unlocked(text)
+                except Exception:
+                    if provenance is not None:
+                        provenance.unlink(missing_ok=True)
+                    raise
         return 'ready' if probe else user_text_seen(mark, text, lambda: bridge.session_file_from_descendants(transport.pane_pid()))
     if engine == 'cursor':
         with bridge.composer_lock():

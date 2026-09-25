@@ -26,3 +26,11 @@ the listener state directory; receiver UUID receipts suppress duplicate sends.
 
 The optional adapter requires a compatible local `claude-automations/scripts`
 installation. Other deployments can supply their own trusted stdin adapter.
+
+On compatible Codex bridges, microphone submissions also write a private local
+display receipt before delivery. It contains a request ID, target, session path,
+transcript byte offset, timestamp and SHA-256 of the original text, never its body.
+The Telegram viewer can match that receipt and label the input as Jarvis voice.
+No marker is inserted into the model prompt. The label identifies the transport,
+not the speaker, and cannot authorize an action. Unmatched inputs retain the
+unknown-source label. Other engines and older bridge installations are unchanged.
