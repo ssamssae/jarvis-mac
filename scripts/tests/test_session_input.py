@@ -71,6 +71,7 @@ class FreshSessionInputTest(unittest.TestCase):
             request = dict(id='123', node='macbook14', engine='codex', origin='microphone', text='first input')
             pasted = []
             recorded = []
+            bound = []
             def paste(text):
                 pasted.append(text)
                 session.write_text(json.dumps({'payload': {'role': 'user', 'content': text}})+'\n')
@@ -82,8 +83,11 @@ class FreshSessionInputTest(unittest.TestCase):
                 session_file_from_descendants=lambda pid:session if session.exists() else None)
             def record(req, path, **kwargs):
                 recorded.append((path, kwargs['pane_pid'], list(pasted)))
+                return Path(directory)/'display.json'
             with patch.object(adapter, 'load_bridge', return_value=bridge), patch.dict(sys.modules,
-                    {'voice_input_provenance':SimpleNamespace(record_voice_input=record)}):
+                    {'voice_input_provenance':SimpleNamespace(record_voice_input=record,
+                        bind_voice_input_session=lambda receipt,path:bound.append(path))}):
                 self.assertEqual(adapter.local_submit(Path(directory), request), 'submitted')
             self.assertEqual(pasted, ['first input'])
             self.assertEqual(recorded, [(None, 23, [])])
+            self.assertEqual(bound, [session])
