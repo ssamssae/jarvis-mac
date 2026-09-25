@@ -57,6 +57,25 @@ class DictationTest(unittest.TestCase):
                 self.assertFalse(d.start(text))
                 self.assertIsNone(d.target)
 
+    def test_english_and_mixed_hermes_invocations(self):
+        for text in ('Hermes Codex', 'hermes codex', 'HERMES CODEX',
+                     'Hermes 코덱스', '헤르메스 Codex', '헬멧스 CODEX',
+                     ' Hermes Codex! ', 'HermesCodex'):
+            with self.subTest(text=text):
+                d = Dictation()
+                self.assertTrue(d.start(text))
+                self.assertEqual(d.target, ('macbook14', 'codex'))
+                action, request = d.accept('Keep Hermes Codex CASE 엔터')
+                self.assertEqual(action, 'submit')
+                self.assertEqual(request['text'], 'Keep Hermes Codex CASE')
+
+    def test_english_invocation_boundary(self):
+        for text in ('What is Hermes Codex', 'Hermes Codex가 뭐야',
+                     'Hermes Codex turn off fan', 'Hermes Codexes',
+                     'Hermes', 'Codex', 'HermesX Codex'):
+            with self.subTest(text=text):
+                self.assertFalse(Dictation().start(text))
+
     def test_long_dictation_does_not_finish_at_segment_boundary(self):
         d = Dictation(); d.start('볼칸 그록')
         for _ in range(100):

@@ -12,6 +12,12 @@ import jarvis_mac_listener as listener
 
 class ListenerDictationTest(unittest.TestCase):
     def test_named_target_multisegment_literal_approval_and_single_enter(self):
+        self.check_named_target('자비스 헤르메스 코덱스')
+
+    def test_english_target_enters_dictation_without_conversation(self):
+        self.check_named_target('자비스 Hermes Codex')
+
+    def check_named_target(self, invocation):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'config.json').write_text(json.dumps({'cast_name':'test', 'stt_worker':'test',
@@ -21,7 +27,7 @@ class ListenerDictationTest(unittest.TestCase):
             speech = Mock(first_playing=None, ack_first_playing=None, events=[])
             indicator = Mock()
             stt = Mock()
-            stt.read.side_effect = [{'text':s} for s in ['자비스 헤르메스 코덱스', '승인', '', '엔터']]
+            stt.read.side_effect = [{'text':s} for s in [invocation, '승인', '', '엔터']]
             requests = []
             def deliver(config, request):
                 requests.append(request)
