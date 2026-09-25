@@ -19,6 +19,7 @@ class ListenerDictationTest(unittest.TestCase):
             cast = Mock(directory=directory, cast=None, startup_prepare_s=0,
                         startup_prepare_error=None)
             speech = Mock(first_playing=None, ack_first_playing=None, events=[])
+            indicator = Mock()
             stt = Mock()
             stt.read.side_effect = [{'text':s} for s in ['자비스 헤르메스 코덱스', '승인', '', '엔터']]
             requests = []
@@ -43,7 +44,7 @@ class ListenerDictationTest(unittest.TestCase):
                  patch.object(listener, 'worker_command', return_value=['test']), \
                  patch.object(listener, 'CastSession', return_value=cast), \
                  patch.object(listener, 'SpeechQueue', return_value=speech), \
-                 patch.object(listener, 'StatusLight', return_value=Mock()), \
+                 patch.object(listener, 'StatusLight', return_value=indicator), \
                  patch.object(listener, 'control_events', events), \
                  patch.object(listener, 'deliver', deliver), \
                  patch.object(listener, 'CursorQA') as qa, \
@@ -56,5 +57,7 @@ class ListenerDictationTest(unittest.TestCase):
             self.assertEqual(requests[0]['node'], 'macbook14')
             self.assertEqual(requests[0]['engine'], 'codex')
             qa.assert_not_called()
+            indicator.show.assert_any_call('green', ttl=0)
+            indicator.show.assert_any_call('yellow', ttl=1.5)
             self.assertIn(('말씀하세요.',), [call.args for call in speech.submit.call_args_list])
             self.assertEqual(list((root/'pending-dictations').glob('*.json')), [])
