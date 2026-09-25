@@ -37,6 +37,26 @@ class DictationTest(unittest.TestCase):
         for text in ('아테나', '헤르메스 코덱스가 뭐야', '다른 헤르메스 코덱스', '커서'):
             self.assertFalse(Dictation().start(text))
 
+    def test_observed_hermes_alias_routes_without_rewriting_content(self):
+        for engine, expected in (('코덱스', 'codex'), ('그록', 'grok'), ('커서', 'cursor')):
+            for text in ('헬멧스 ' + engine, '헬멧스' + engine + '.'):
+                with self.subTest(text=text):
+                    d = Dictation()
+                    self.assertTrue(d.start(text))
+                    self.assertEqual(d.target, ('macbook14', expected))
+                    action, request = d.accept('헬멧스라는 단어를 설명해줘 엔터')
+                    self.assertEqual(action, 'submit')
+                    self.assertEqual((request['node'], request['engine']), ('macbook14', expected))
+                    self.assertEqual(request['text'], '헬멧스라는 단어를 설명해줘')
+
+    def test_hermes_alias_does_not_capture_questions_or_near_matches(self):
+        for text in ('헬멧스', '헬멧스 코덱스가 뭐야', '다른 헬멧스 코덱스',
+                     '헬멧스 코덱스 선풍기 꺼줘', '헬멧 코덱스', '헬멧스코덱스입니다'):
+            with self.subTest(text=text):
+                d = Dictation()
+                self.assertFalse(d.start(text))
+                self.assertIsNone(d.target)
+
     def test_long_dictation_does_not_finish_at_segment_boundary(self):
         d = Dictation(); d.start('볼칸 그록')
         for _ in range(100):

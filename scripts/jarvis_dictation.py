@@ -4,7 +4,8 @@ import json
 import subprocess
 import uuid
 
-NODES = {'헤르메스': 'macbook14', '아테나': 'mac', '아테느': 'mac',
+# Only observed standalone target aliases; do not fuzzy-match dictated content.
+NODES = {'헤르메스': 'macbook14', '헬멧스': 'macbook14', '아테나': 'mac', '아테느': 'mac',
          '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini'}
 ENGINES = {'코덱스': 'codex', '그록': 'grok', '커서': 'cursor'}
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')

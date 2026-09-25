@@ -6,6 +6,25 @@ word `엔터` to send the accumulated text once. `승인 엔터` sends exactly `
 No model interprets or rewrites the dictated content. Approval words are ordinary
 user text, not a permission decision made by this router.
 
+The observed STT spelling `헬멧스` is an explicit alias for `헤르메스` only in a
+complete node + engine invocation. `헬멧스 코덱스가 뭐야` remains conversation;
+dictated content is never corrected using this alias.
+
+## Target alias verification (T-260925-035)
+
+- Prerequisites: configured microphone/STT and named-session transport.
+- Entry: say `자비스`, wait for the cue, then say `헤르메스 코덱스`.
+- Expected: if STT returns `헬멧스 코덱스`, the listener says `말씀하세요`
+  and enters dictation for macbook14:codex instead of answering a general question.
+- Local check: `python3 -m unittest discover -s scripts/tests -p test_dictation.py -v`.
+  Covers target selection, exact-match boundaries, and unchanged dictated text.
+- Verified 2026-09-25 KST on macbook14: the alias regression suite passed (9 tests),
+  the full suite passed (175 tests), and native Swift compilation and plist lint passed.
+- Sending occurs only after dictated content ends with `엔터`; the local tests
+  do not send messages or operate appliances.
+- Live speech, playback, and delivery with this alias remain unverified until
+  the reviewed change is installed with restart approval and a user voice trial.
+
 This mode uses the configured local STT worker, including the installed 입타
 helper. The native microphone keeps recording during transcription. Audio events
 carry a dictation ID so late chunks from an ended session cannot trigger commands.
