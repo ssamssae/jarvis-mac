@@ -11,6 +11,17 @@ from unittest.mock import MagicMock, patch
 
 
 class EnglishWakeRetryTests(unittest.TestCase):
+    def test_selection_hint_only_on_selected_request_and_no_wake_retry(self):
+        stt = MagicMock()
+        stt.read.return_value = {'text': '커서'}
+        gate = WakeGate()
+        transcribe_for_gate(stt, Path('/example.wav'), gate, selection_context='engine', speech_seconds=.8)
+        self.assertEqual(stt.send.call_count, 1)
+        self.assertEqual(stt.send.call_args.args[0], {'wav':'/example.wav', 'selection_context':'engine'})
+        stt.reset_mock()
+        transcribe_for_gate(stt, Path('/example.wav'), gate, english_retry=False)
+        self.assertEqual(stt.send.call_args.args[0], {'wav':'/example.wav'})
+
     def recognize(self, korean, english=None, armed=False, retry=True, seconds=None):
         stt = MagicMock()
         stt.read.side_effect = [{'text': korean}, {'text': english}]

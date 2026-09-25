@@ -10,6 +10,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import whisper_cpp_worker as worker
 
 class WhisperWorkerTests(unittest.TestCase):
+    def test_selection_context_is_restricted_and_does_not_leak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); model,wav,binary=self.fixture(root)
+            binary.write_text('#!'+sys.executable+'\nimport sys,pathlib\na=sys.argv\np=a[a.index("--prompt")+1] if "--prompt" in a else "no-hint"\npathlib.Path(a[a.index("-of")+1]+".txt").write_text(p,encoding="utf-8")\n')
+            requests = [{'wav':str(wav),'selection_context':v} for v in ['engine','node','invalid',[]]]
+            requests.append({'wav':str(wav)})
+            result = subprocess.run(worker.worker_command({'model':str(model),'whisper_cli':str(binary)}),
+                input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True,text=True,timeout=5)
+            self.assertEqual([json.loads(line) for line in result.stdout.splitlines()],
+                [{'ready':True},{'text':worker.SELECTION_PROMPTS['engine']},
+                 {'text':worker.SELECTION_PROMPTS['node']},
+                 {'error':'local_transcription_failed'},{'error':'local_transcription_failed'},
+                 {'text':'no-hint'}])
+
     def test_request_language_is_one_shot_and_restricted(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); model,wav,binary=self.fixture(root)

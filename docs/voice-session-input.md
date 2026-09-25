@@ -97,3 +97,23 @@ The Telegram viewer can match that receipt and label the input as Jarvis voice.
 No marker is inserted into the model prompt. The label identifies the transport,
 not the speaker, and cannot authorize an action. Unmatched inputs retain the
 unknown-source label. Other engines and older bridge installations are unchanged.
+
+## Selection STT vocabulary (T-260925-040)
+
+The bundled whisper-cli worker supplies a one-request vocabulary prompt only
+while waiting for an engine or node. It accepts the internal `engine` / `node`
+context enum; callers cannot pass arbitrary prompt text. Wake recognition and
+literal body dictation receive no vocabulary prompt. Custom workers retain their
+existing protocol. Dictated body chunks do not run the wake-only English retry.
+
+These are soft vocabulary hints, not grammar-constrained destination selection.
+Unknown output still reprompts, cancellation stays available, and no extra model,
+automatic message, or device operation is introduced.
+
+Verification: worker protocol isolation/invalid-context tests, listener context
+sequence (none → engine → node → none for body), and existing guided-flow tests.
+On 2026-09-25, the installed model decoded clean synthetic Codex/Cursor/Grok,
+notebook and cancel correctly with hints. Synthetic silence and an unrelated
+appliance phrase did not decode into valid engines. These are controlled fixtures,
+not a measured human recognition rate. Repeat the live speaker-to-microphone flow
+after installation to assess acoustic performance; retain the actual outcome.

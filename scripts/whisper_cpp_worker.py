@@ -12,6 +12,12 @@ import sys
 import tempfile
 import wave
 
+# Vocabulary hints, never a grammar that forces noise into a valid destination.
+SELECTION_PROMPTS = {
+    'engine': '음성 입력 연결 대상: 코덱스, 커서, 그록. Codex, Cursor, Grok. 취소.',
+    'node': '노드 이름: 헤르메스, 노트북, 아테나, 볼칸. Hermes. 취소.',
+}
+
 
 def worker_command(config):
     model = str(config.get('model') or '')
@@ -22,7 +28,9 @@ def worker_command(config):
             '--whisper-cli', str(config.get('whisper_cli') or 'whisper-cli')]
 
 
-def transcribe(binary, model, wav, language='ko', timeout=50):
+def transcribe(binary, model, wav, language='ko', timeout=50, selection_context=None):
+    if selection_context is not None and selection_context not in SELECTION_PROMPTS:
+        raise ValueError('invalid_selection_context')
     path = Path(wav).expanduser().resolve(strict=True)
     if not path.is_file() or not 44 <= path.stat().st_size <= 4_000_000:
         raise ValueError('invalid_wav')
@@ -42,8 +50,9 @@ def transcribe(binary, model, wav, language='ko', timeout=50):
             with wave.open(str(path), 'wb') as padded:
                 padded.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
                 padded.writeframes(leading + short_pcm + trailing)
+        prompt_args = ['--prompt', SELECTION_PROMPTS[selection_context]] if selection_context else []
         process = subprocess.Popen([str(binary), '-m', str(model), '-f', str(path),
-            '-l', language, '-nt', '-otxt', '-of', str(output)],
+            '-l', language, '-nt', '-otxt', '-of', str(output), *prompt_args],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)
         try:
@@ -82,7 +91,10 @@ def main():
                 language = request.get('language', args.language)
                 if 'language' in request and language not in ('ko', 'en', 'ja'):
                     raise ValueError('invalid_request_language')
-                result = transcribe(binary, model, request['wav'], language)
+                context = request.get('selection_context')
+                if context is not None and (not isinstance(context, str) or context not in SELECTION_PROMPTS):
+                    raise ValueError('invalid_selection_context')
+                result = transcribe(binary, model, request['wav'], language, selection_context=context)
                 print(json.dumps({'text':result}, ensure_ascii=False), flush=True)
             except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.TimeoutExpired, wave.Error):
                 print(json.dumps({'error':'local_transcription_failed'}), flush=True)

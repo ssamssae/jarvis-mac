@@ -31,10 +31,11 @@ HEY_PREFIX = re.compile(r"^\s*(?:헤이|hey\b)", re.I)
 ENGLISH_WAKE_ONLY = re.compile(r"\s*hey[\s,.!?:]+jarvis[\s,.!?:]*", re.I)
 
 
-def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None, japanese_confirmation=False):
+def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=None, japanese_confirmation=False, selection_context=None):
     # Freeze the follow-up state before STT so a slow decode cannot change its language.
     waiting_for_question = time.monotonic() < gate.armed_until
-    stt.send({'wav': str(path), **({'language': 'ja'} if japanese_confirmation else {})})
+    stt.send({'wav': str(path), **({'language': 'ja'} if japanese_confirmation else {}),
+              **({'selection_context': selection_context} if selection_context else {})})
     text = stt.read()['text'].strip()
     if japanese_confirmation:
         return text
@@ -44,7 +45,7 @@ def transcribe_for_gate(stt, path, gate, *, english_retry=True, speech_seconds=N
             and sum(c.isalnum() for c in text) > 8):
         return ''
     short_wake = speech_seconds is not None and .4 <= speech_seconds <= 2.5
-    if (english_retry and not waiting_for_question
+    if (english_retry and not selection_context and not waiting_for_question
             and (short_wake or HEY_PREFIX.match(text))
             and not (WAKE.match(text) or KOREAN_WAKE.match(text))):
         stt.send({'wav': str(path), 'language': 'en'})
@@ -240,7 +241,8 @@ def main():
                 began = time.monotonic()
                 try:
                     text = transcribe_for_gate(stt, path, gate,
-                                               english_retry=not config.get('stt_worker') and not dictation.selecting,
+                                               english_retry=not config.get('stt_worker') and not dictation.selecting and not dictation.target,
+                                               selection_context=dictation.selection_stage if not config.get('stt_worker') else None,
                                                speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
                                                japanese_confirmation=not dictation.target and work_end.japanese and time.monotonic() < work_end.until)
                 except (RuntimeError, KeyError, ValueError, OSError) as exc:
