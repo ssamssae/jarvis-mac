@@ -80,7 +80,7 @@ def main():
                 if len(line) > 16384: raise ValueError('request_too_large')
                 request = json.loads(line)
                 language = request.get('language', args.language)
-                if 'language' in request and language not in ('ko', 'en'):
+                if 'language' in request and language not in ('ko', 'en', 'ja'):
                     raise ValueError('invalid_request_language')
                 result = transcribe(binary, model, request['wav'], language)
                 print(json.dumps({'text':result}, ensure_ascii=False), flush=True)

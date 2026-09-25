@@ -233,6 +233,19 @@ def main():
                                                english_retry=not config.get('stt_worker'),
                                                speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
                                                japanese_confirmation=work_end.japanese and time.monotonic() < work_end.until)
+                except (RuntimeError, KeyError, ValueError, OSError) as exc:
+                    # An STT rejection must consume confirmation, not kill the listener.
+                    work_end.cancel()
+                    gate.armed_until = 0
+                    indicator.release()
+                    atomic_json(root/'last-stt-error.json', {
+                        'error_type': type(exc).__name__, 'stage': 'transcription',
+                        'finished_wall': time.time(), 'confirmation_cancelled': True})
+                    # Drop any late worker response so it cannot confirm a later request.
+                    stt.close()
+                    stt = JSONWorker(worker_command(config))
+                    state('listening', True, last_result='transcription_error')
+                    continue
                 finally:
                     path.unlink(missing_ok=True)
                 stt_s = time.monotonic() - began
