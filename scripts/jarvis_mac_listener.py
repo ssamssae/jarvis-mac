@@ -267,6 +267,7 @@ def main():
                         continue
                     state('speaking', False, dictation_id='')
                     if action == 'submit':
+                        indicator.show('yellow', ttl=1.5)
                         # Save privately before transport; preserve on failure, never replay automatically.
                         pending_dir = root/'pending-dictations'
                         pending_dir.mkdir(exist_ok=True, mode=0o700)
@@ -298,6 +299,8 @@ def main():
                     finally:
                         active_speech = None
                         cast_session.clear_audio()
+                    if dictation.target:
+                        indicator.show('green', ttl=0)
                     state('dictating' if dictation.target else 'listening', True,
                           dictation_id=dictation.request_id or '')
                     continue
@@ -472,6 +475,8 @@ def main():
             if remaining:
                 gate.armed_until = work_end.until
                 indicator.show('green', ttl=remaining)
+            if dictation.target:
+                indicator.show('green', ttl=0)
             state('dictating' if dictation.target else ('armed' if remaining else 'listening'), True, dictation_id=dictation.request_id or '', armed_seconds=remaining, last_result=receipt['result'])
     except (KeyboardInterrupt, BrokenPipeError):
         pass
