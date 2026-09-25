@@ -28,10 +28,10 @@ class ConfirmationTests(unittest.TestCase):
     def test_request_never_executes_and_bare_yes_never_executes(self):
         c = end.Confirmation()
         self.assertIsNone(c.accept('예', 1, 1))
-        for word in ['시고토 오와리', '시고토오와리!', 'しごとおわり', 'しごと終わり', '仕事 終わり']:
+        for word in ['시고토 오와리', '시고토오와리!', 'しごとおわり', 'しごと終わり', '仕事 終わり', '시골토의 끝', '직업 끝']:
             self.assertEqual(c.accept(word, 2, 2), 'prompt')
         self.assertIsNone(c.accept('예', 3, 3))  # arm only after successful question playback
-        for word in ['일 끝', '끝!', '시고토 오와리 하지마', '시고토 오와리 예', '시고토 오와리라고 말해', '일 끝내지마', '일 끝이라고 말해', '일 끝 예', '끝내지마', '회의 끝', '끝 예']:
+        for word in ['시골토의 끝이라고 말해', '직업 끝내지마', '직업 끝 예', '일 끝', '끝!', '시고토 오와리 하지마', '시고토 오와리 예', '시고토 오와리라고 말해', '일 끝내지마', '일 끝이라고 말해', '일 끝 예', '끝내지마', '회의 끝', '끝 예']:
             self.assertIsNone(c.accept(word, 3, 3))
 
     def test_yes_once_only_after_prompt_and_before_deadline(self):
@@ -113,6 +113,13 @@ class RoutingTests(unittest.TestCase):
 
     def test_confirmed_followup_executes_once(self):
         self.assertEqual(self.run_dialog(['자비스 시고토 오와리', '예', '예']), 1)
+
+    def test_observed_work_end_transcripts_require_new_confirmation(self):
+        for transcript in ['시골토의 끝', '직업 끝']:
+            with self.subTest(transcript=transcript):
+                self.assertEqual(self.run_dialog(['자비스', transcript]), 0)
+                self.assertEqual(self.run_dialog(['자비스', transcript, '예', '예']), 1)
+                self.assertEqual(self.run_dialog(['자비스', transcript, '아니요', '예']), 0)
 
     def test_standalone_cancel_and_observed_transcription_never_call_model(self):
         self.assertEqual(self.run_dialog(['자비스 취소']), 0)
