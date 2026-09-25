@@ -130,3 +130,26 @@ class DictationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ProvenanceResetTest(unittest.TestCase):
+    def test_selection_preserves_source_then_resets_for_next_input(self):
+        d = Dictation(capture_node='mac')
+        d.select('음성 입력', start_source='google-home-matter')
+        d.select('코덱스')
+        d.select('노트북')
+        _, request = d.accept('원문 엔터')
+        self.assertEqual(request['start_source'], 'google-home-matter')
+        self.assertEqual(request['capture_node'], 'mac')
+        d.start('아테나 코덱스')
+        _, request = d.accept('다음 엔터')
+        self.assertEqual(request['start_source'], 'microphone')
+
+    def test_cancelled_nest_selection_cannot_label_local_selection(self):
+        d = Dictation()
+        d.select('음성 입력', start_source='google-home-matter')
+        d.select('취소', cancelled=True)
+        d.select('음성 입력')
+        d.select('코덱스')
+        d.select('아테나')
+        _, request = d.accept('본문 엔터')
+        self.assertEqual(request['start_source'], 'microphone')

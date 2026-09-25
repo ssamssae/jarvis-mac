@@ -122,8 +122,26 @@ after installation to assess acoustic performance; retain the actual outcome.
 ## Nest start (T-260925-041)
 
 With the paired Matter voice outlet and the separate Google Home starter enabled,
-say `OK Google、メモスタート` (메모 스타토). Only this initial invocation uses Nest.
+say `OK Google、ボイススタート` (보이스 스타토). Only this initial invocation uses Nest.
 After `어디로 연결할까요?`, engine/node selection and body use Athena's existing
 microphone and STT. See [Matter adapter setup and live acceptance](../scripts/google-home/README.md#nest-starts-voice-input-athena-captures-everything-afterward-t-260925-041).
 The setup being present is not proof that the Google Home routine has been
 registered or heard; retain the actual live result separately.
+
+
+## Input source display (T-260925-042)
+
+Set private `dictation.capture_node` to the microphone host's canonical node key
+(`mac` on Athena). The listener retains a Matter start through engine/node
+selection, then submits `start_source` and `capture_node` separately from the
+literal body. Cancel, timeout, a new direct invocation, and submission clear the
+start source. A voice request never identifies or authenticates the speaker.
+
+Install the matching session adapter and `voice_input_provenance.py` on each
+configured receiving node, plus the matching Codex viewer hook. Missing modules
+retain the unknown-source fallback; a repository merge alone is not deployment.
+For the approved hybrid route the expected card is “네스트로 시작 · 아테나 음성 입력 ·
+자비스 전달”. Local microphone starts must omit the Nest prefix. Reuse
+`test_dictation_listener.py`, `test_dictation.py`, and the bridge repository's
+`test_voice_input_provenance.py`. Live acceptance requires a new received voice
+card with the original text intact; unit tests do not prove Telegram receipt.
