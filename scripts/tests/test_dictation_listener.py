@@ -53,7 +53,7 @@ class ListenerDictationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'config.json').write_text(json.dumps({'cast_name':'test', 'stt_worker':'test',
-                                                       'dictation':{'argv':['test']}}))
+                                                       'dictation':{'argv':['test'], 'capture_node':'mac'}}))
             if not custom_worker:
                 config = json.loads((root/'config.json').read_text())
                 config.pop('stt_worker')
@@ -116,6 +116,8 @@ class ListenerDictationTest(unittest.TestCase):
             self.assertEqual(requests[0]['text'], '승인')
             self.assertEqual(requests[0]['node'], 'macbook14')
             self.assertEqual(requests[0]['engine'], 'codex')
+            self.assertEqual(requests[0]['capture_node'], 'mac')
+            self.assertEqual(requests[0]['start_source'], 'google-home-matter' if transcripts[0] is None else 'microphone')
             qa.assert_not_called()
             indicator.show.assert_any_call('green', ttl=0)
             indicator.show.assert_any_call('yellow', ttl=1.5)

@@ -14,7 +14,9 @@ END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
 
 
 class Dictation:
-    def __init__(self):
+    def __init__(self, capture_node=None):
+        self.capture_node = capture_node if capture_node in {"mac", "macbook14", "macmini"} else None
+        self.start_source = "microphone"
         self.target = None
         self.parts = []
         self.request_id = None
@@ -31,7 +33,7 @@ class Dictation:
         if self.selecting:
             self.selection_until = time.monotonic() + 30
 
-    def select(self, text, *, cancelled=False):
+    def select(self, text, *, cancelled=False, start_source="microphone"):
         key = re.sub(r'[\s,.!?。！？]', '', text).lower()
         if self.selecting and cancelled:
             self.cancel()
@@ -42,6 +44,7 @@ class Dictation:
         if key == '음성입력':
             self.cancel()
             self.selection_stage = 'engine'
+            self.start_source = 'google-home-matter' if start_source == 'google-home-matter' else 'microphone'
             self.arm_selection()
             return '어디로 연결할까요?'
         if self.selection_stage == 'engine':
@@ -56,7 +59,9 @@ class Dictation:
             if node is None:
                 return '헤르메스 또는 노트북, 아테나, 볼칸 중 어떤 노드인가요?'
             engine = self.selection_engine
+            source = self.start_source
             self.cancel()
+            self.start_source = source
             self.target = (node, engine)
             self.request_id = str(uuid.uuid4())
             return '말씀하세요.'
@@ -66,12 +71,14 @@ class Dictation:
         match = START.fullmatch(text.lower())
         if not match:
             return False
+        self.cancel()
         self.target = (NODES[match[1]], ENGINES[match[2]])
         self.parts = []
         self.request_id = str(uuid.uuid4())
         return True
 
     def cancel(self):
+        self.start_source = "microphone"
         self.target = None
         self.parts = []
         self.request_id = None
@@ -92,7 +99,7 @@ class Dictation:
         if not self.parts:
             return 'empty', None
         request = dict(id=self.request_id, node=self.target[0], engine=self.target[1], origin='microphone',
-                       text=' '.join(self.parts))
+                       text=' '.join(self.parts), start_source=self.start_source, capture_node=self.capture_node)
         self.cancel()
         return 'submit', request
 

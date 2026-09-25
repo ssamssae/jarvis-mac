@@ -188,7 +188,7 @@ def main():
         raise SystemExit('listener_already_running')
     config = json.loads((root/'config.json').read_text())
     gate = WakeGate()
-    dictation = Dictation()
+    dictation = Dictation(capture_node=config.get('dictation', {}).get('capture_node'))
     work_end = jarvis_work_end.Confirmation()
     home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
@@ -380,7 +380,8 @@ def main():
                     # same queue serializes this sound before the eventual answer,
                     # while Cursor generation proceeds on this controller thread.
                     speech.submit_acknowledgement()
-                    selection_answer = dictation.select(question, cancelled=is_cancel(question))
+                    selection_answer = dictation.select(question, cancelled=is_cancel(question),
+                                                         start_source='google-home-matter' if external_dictation else 'microphone')
                     dictation_control = selection_answer is not None or dictation.start(question)
                     plan = home.plan(question) if not dictation_control else None
                     ending = work_end.accept(question, time.monotonic(), event['speech_started_wall']) if not dictation_control else None
