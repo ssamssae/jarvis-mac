@@ -10,6 +10,17 @@ The observed STT spelling `헬멧스` is an explicit alias for `헤르메스` on
 complete node + engine invocation. `헬멧스 코덱스가 뭐야` remains conversation;
 dictated content is never corrected using this alias.
 
+`Hermes Codex` is also accepted, case-insensitively, including mixed Korean and
+English forms such as `헤르메스 Codex` and `Hermes 코덱스`. Only the invocation
+is case-normalized; the dictated body keeps its original text and case.
+Questions such as `What is Hermes Codex` remain conversation.
+
+T-260925-036 reproduces the 2026-09-25 live `Hermes Codex` transcript. The
+English/mixed-language parser and mocked listener checks pass, including
+`말씀하세요` and no conversation backend call. Run
+`python3 -m unittest discover -s scripts/tests -p 'test_dictation*.py' -q`
+to repeat those 13 checks without sending messages or controlling devices.
+
 ## Target alias verification (T-260925-035)
 
 - Prerequisites: configured microphone/STT and named-session transport.

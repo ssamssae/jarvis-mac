@@ -5,9 +5,9 @@ import subprocess
 import uuid
 
 # Only observed standalone target aliases; do not fuzzy-match dictated content.
-NODES = {'헤르메스': 'macbook14', '헬멧스': 'macbook14', '아테나': 'mac', '아테느': 'mac',
+NODES = {'헤르메스': 'macbook14', '헬멧스': 'macbook14', 'hermes': 'macbook14', '아테나': 'mac', '아테느': 'mac',
          '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini'}
-ENGINES = {'코덱스': 'codex', '그록': 'grok', '커서': 'cursor'}
+ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', '커서': 'cursor'}
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')
 END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
 
@@ -19,7 +19,7 @@ class Dictation:
         self.request_id = None
 
     def start(self, text):
-        match = START.fullmatch(text)
+        match = START.fullmatch(text.lower())
         if not match:
             return False
         self.target = (NODES[match[1]], ENGINES[match[2]])
