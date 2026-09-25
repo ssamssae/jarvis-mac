@@ -1,8 +1,6 @@
 import { Endpoint, Environment, Logger, ServerNode, VendorId } from '@matter/main';
 import { OnOffPlugInUnitDevice } from '@matter/main/devices/on-off-plug-in-unit';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
-import { BridgedDeviceBasicInformationServer } from '@matter/main/behaviors/bridged-device-basic-information';
-import { AggregatorEndpoint } from '@matter/main/endpoints/aggregator';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -14,7 +12,7 @@ import { StartGate } from './start_gate.mjs';
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 
-export async function createStartNode({ storage, run, requestEnd = async () => {}, requestInput, id = 'jarvis-work-start', port = 5540 }) {
+export async function createStartNode({ storage, run, requestEnd = async () => {}, id = 'jarvis-work-start', port = 5540 }) {
     Logger.level = 'error'; // Pairing credentials must never enter service logs.
     Environment.default.vars.set('storage.path', storage);
     const node = await ServerNode.create({
@@ -50,29 +48,33 @@ export async function createStartNode({ storage, run, requestEnd = async () => {
             console.error('work_start_failed');
         }).finally(async () => { await button.set({ onOff: { onOff: false } }); });
     });
-    let inputButton, inputPending = Promise.resolve();
-    if (requestInput) {
-        // Keep the original endpoint ID/number and pairing storage intact.
-        const bridge = new Endpoint(AggregatorEndpoint, { id: 'voice-input-bridge' });
-        await node.add(bridge);
-        inputButton = new Endpoint(OnOffPlugInUnitDevice.with(BridgedDeviceBasicInformationServer), {
-            id: 'voice-input',
-            bridgedDeviceBasicInformation: {
-                nodeLabel: 'Jarvis Voice Input', productName: 'Jarvis Voice Input',
-                serialNumber: 'jarvis-voice-input-1', uniqueId: 'jarvis-voice-input-1', reachable: true,
-            },
-        });
-        await bridge.add(inputButton);
-        await inputButton.set({ onOff: { onOff: false } });
-        const inputGate = new StartGate(requestInput, { cooldownMs: 15000 });
-        inputButton.events.onOff.onOff$Changed.on(value => {
-            if (!value) return;
-            inputPending = inputGate.accept(true).catch(() => {
-                console.error('dictation_start_failed');
-            }).finally(async () => { await inputButton.set({ onOff: { onOff: false } }); });
-        });
-    }
-    return { node, button, inputButton, idle: () => Promise.all([pending, endPending, inputPending]) };
+    return { node, button, idle: () => Promise.all([pending, endPending]) };
+}
+
+export async function createVoiceNode({ storage, requestInput, id = 'jarvis-voice-input', port = 5541 }) {
+    Logger.level = 'error';
+    Environment.default.vars.set('storage.path', storage);
+    const node = await ServerNode.create({
+        id, network: { port },
+        productDescription: { name: 'Jarvis Voice Input', deviceType: OnOffPlugInUnitDevice.deviceType },
+        basicInformation: {
+            vendorName: 'Jarvis', vendorId: VendorId(0xfff1), productId: 0x8000,
+            productName: 'Jarvis Voice Input', nodeLabel: 'Jarvis Voice Input',
+            serialNumber: 'jarvis-voice-input-1', uniqueId: 'jarvis-voice-input-1',
+        },
+    });
+    const button = new Endpoint(OnOffPlugInUnitDevice, { id: 'input' });
+    await node.add(button);
+    await button.set({ onOff: { onOff: false } });
+    const gate = new StartGate(requestInput, { cooldownMs: 15000 });
+    let pending = Promise.resolve();
+    button.events.onOff.onOff$Changed.on(value => {
+        if (!value) return;
+        pending = gate.accept(true).catch(() => {
+            console.error('dictation_start_failed');
+        }).finally(async () => { await button.set({ onOff: { onOff: false } }); });
+    });
+    return { node, button, idle: () => pending };
 }
 
 async function main() {
@@ -84,14 +86,19 @@ async function main() {
         storage: join(state, 'matter'),
         run: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'run_work_start.py'), '--state-dir', jarvisState, '--receipt-dir', state], { timeout: 25000, maxBuffer: 4096 }),
         requestEnd: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'request_work_end.py'), '--state-dir', jarvisState], { timeout: 4000, maxBuffer: 4096 }),
+    });
+    const voice = await createVoiceNode({
+        storage: join(state, 'matter'),
         requestInput: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'request_dictation.py'), '--state-dir', jarvisState], { timeout: 4000, maxBuffer: 4096 }),
     });
     await writeFile(join(state, 'pairing.json'), JSON.stringify(node.state.commissioning.pairingCodes), { mode: 0o600 });
-    const status = () => writeFile(join(state, 'status.json'), JSON.stringify({ pid: process.pid, online: node.lifecycle.isOnline, commissioned: node.state.commissioning.commissioned, updated_at: Date.now() }), { mode: 0o600 });
+    await writeFile(join(state, 'voice-pairing.json'), JSON.stringify(voice.node.state.commissioning.pairingCodes), { mode: 0o600 });
+    const status = () => writeFile(join(state, 'status.json'), JSON.stringify({ pid: process.pid, online: node.lifecycle.isOnline, commissioned: node.state.commissioning.commissioned, voice_online: voice.node.lifecycle.isOnline, voice_commissioned: voice.node.state.commissioning.commissioned, updated_at: Date.now() }), { mode: 0o600 });
     await node.start();
+    await voice.node.start();
     await status();
     const timer = setInterval(() => { status().catch(() => {}); }, 5000);
-    const close = async () => { clearInterval(timer); await idle(); await node.close(); process.exit(0); };
+    const close = async () => { clearInterval(timer); await Promise.all([idle(), voice.idle()]); await voice.node.close(); await node.close(); process.exit(0); };
     process.once('SIGTERM', close);
     process.once('SIGINT', close);
 }
