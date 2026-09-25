@@ -1,5 +1,6 @@
 import { Endpoint, Environment, Logger, ServerNode, VendorId } from '@matter/main';
 import { OnOffPlugInUnitDevice } from '@matter/main/devices/on-off-plug-in-unit';
+import { OnOffServer } from '@matter/main/behaviors/on-off';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -11,7 +12,7 @@ import { StartGate } from './start_gate.mjs';
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 
-export async function createStartNode({ storage, run, id = 'jarvis-work-start', port = 5540 }) {
+export async function createStartNode({ storage, run, requestEnd = async () => {}, id = 'jarvis-work-start', port = 5540 }) {
     Logger.level = 'error'; // Pairing credentials must never enter service logs.
     Environment.default.vars.set('storage.path', storage);
     const node = await ServerNode.create({
@@ -24,7 +25,18 @@ export async function createStartNode({ storage, run, id = 'jarvis-work-start', 
             serialNumber: 'jarvis-work-start-1', uniqueId: 'jarvis-work-start-1',
         },
     });
-    const button = new Endpoint(OnOffPlugInUnitDevice, { id: 'start' });
+    const endGate = new StartGate(requestEnd, { cooldownMs: 15000 });
+    let endPending = Promise.resolve();
+    class RoutineOnOffServer extends OnOffServer {
+        async off() {
+            await super.off();
+            // Handle an explicit OFF command even when the momentary plug is OFF.
+            // Attribute resets and startup restoration never invoke this method.
+            endPending = endGate.accept(true).catch(() => { console.error('work_end_prompt_failed'); });
+            await endPending;
+        }
+    }
+    const button = new Endpoint(OnOffPlugInUnitDevice.with(RoutineOnOffServer), { id: 'start' });
     await node.add(button);
     // Restore to OFF before subscribing, so restart cannot replay a stored ON.
     await button.set({ onOff: { onOff: false } });
@@ -36,7 +48,7 @@ export async function createStartNode({ storage, run, id = 'jarvis-work-start', 
             console.error('work_start_failed');
         }).finally(async () => { await button.set({ onOff: { onOff: false } }); });
     });
-    return { node, button, idle: () => pending };
+    return { node, button, idle: () => Promise.all([pending, endPending]) };
 }
 
 async function main() {
@@ -47,6 +59,7 @@ async function main() {
     const { node, idle } = await createStartNode({
         storage: join(state, 'matter'),
         run: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'run_work_start.py'), '--state-dir', jarvisState, '--receipt-dir', state], { timeout: 25000, maxBuffer: 4096 }),
+        requestEnd: () => execFileAsync('/opt/homebrew/bin/python3', [join(here, 'request_work_end.py'), '--state-dir', jarvisState], { timeout: 4000, maxBuffer: 4096 }),
     });
     await writeFile(join(state, 'pairing.json'), JSON.stringify(node.state.commissioning.pairingCodes), { mode: 0o600 });
     const status = () => writeFile(join(state, 'status.json'), JSON.stringify({ pid: process.pid, online: node.lifecycle.isOnline, commissioned: node.state.commissioning.commissioned, updated_at: Date.now() }), { mode: 0o600 });

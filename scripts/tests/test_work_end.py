@@ -12,6 +12,19 @@ import jarvis_work_end as end
 
 
 class ConfirmationTests(unittest.TestCase):
+    def test_japanese_confirmation_only_after_prompt_and_one_use(self):
+        c = end.Confirmation()
+        self.assertIsNone(c.accept('はい', 1, 1))
+        c.arm(10, 100)
+        self.assertEqual(c.accept('はい', 11, 101), 'cancel')
+        for word in ['はい', 'はい。']:
+            c.arm(10, 100, japanese=True)
+            self.assertEqual(c.accept(word, 11, 101), 'execute')
+            self.assertIsNone(c.accept(word, 12, 102))
+        for word, now, wall in [('はい', 22, 101), ('はい', 11, 99), ('はい、いいえ', 11, 101), ('いいえ', 11, 101), ('네', 11, 101)]:
+            c.arm(10, 100, japanese=True)
+            self.assertNotEqual(c.accept(word, now, wall), 'execute')
+
     def test_request_never_executes_and_bare_yes_never_executes(self):
         c = end.Confirmation()
         self.assertIsNone(c.accept('예', 1, 1))
@@ -60,17 +73,21 @@ class ConfirmationTests(unittest.TestCase):
 
 
 class RoutingTests(unittest.TestCase):
-    def run_dialog(self, texts, speech_error=False):
+    def run_dialog(self, texts, speech_error=False, google=False):
         import jarvis_mac_listener as app
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); (root / 'audio').mkdir()
             (root / 'config.json').write_text(json.dumps({'cast_name': 'fixture', 'model': 'fixture', 'work_end': {'steps': []}}))
             def events():
                 for i in range(len(texts)):
+                    if google and i == 0:
+                        now = time.time()
+                        yield json.dumps({'source': 'google-home-matter', 'intent': 'work_end', 'speech_started_wall': now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
+                        continue
                     clip = root / 'audio' / f'{i}.wav'; clip.write_bytes(b'x'*44)
                     now = time.time()
                     yield json.dumps({'wav': str(clip), 'speech_started_wall': now, 'speech_ended_wall': now, 'capture_ended_wall': now}) + '\n'
-            stt = MagicMock(); stt.read.side_effect = [{'text': x} for x in texts]
+            stt = MagicMock(); stt.read.side_effect = [{'text': x} for x in (texts[1:] if google else texts)]
             home = MagicMock(); home.plan.return_value = None
             speech = MagicMock(); speech.first_playing = None; speech.ack_first_playing = None; speech.events = []
             if speech_error: speech.finish.side_effect = RuntimeError('speaker_failed')
@@ -78,7 +95,15 @@ class RoutingTests(unittest.TestCase):
             with patch.object(sys, 'argv', ['listener', '--state-dir', str(root)]), patch.object(sys, 'stdin', events()), patch.object(sys, 'stdout', io.StringIO()), patch.object(app.signal, 'signal'), patch.object(app, 'SmartHome', return_value=home), patch.object(app, 'JSONWorker', return_value=stt), patch.object(app, 'CastOutput'), patch.object(app, 'SpeechQueue', return_value=speech), patch.object(app, 'StatusLight', return_value=indicator), patch.object(app, 'CursorQA') as qa, patch.object(app.jarvis_work_end, 'execute', return_value={'status': 'ok', 'answer': '종료를 요청했어요.'}) as execute:
                 app.main()
             qa.assert_not_called(); home.execute.assert_not_called()
+            if google and len(texts) > 1 and not speech_error:
+                self.assertEqual(stt.send.call_args_list[0].args[0].get('language'), 'ja')
             return execute.call_count
+
+    def test_google_request_only_arms_and_hai_executes_once(self):
+        self.assertEqual(self.run_dialog(['request'], google=True), 0)
+        self.assertEqual(self.run_dialog(['request', 'はい', 'はい'], google=True), 1)
+        self.assertEqual(self.run_dialog(['request', 'いいえ', 'はい'], google=True), 0)
+        self.assertEqual(self.run_dialog(['request', 'はい'], google=True, speech_error=True), 0)
 
     def test_observed_shortened_end_routes_to_prompt_without_execution(self):
         self.assertEqual(self.run_dialog(['자비스', '끝!', '아니요']), 0)

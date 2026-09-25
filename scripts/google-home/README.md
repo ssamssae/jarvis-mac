@@ -1,9 +1,10 @@
-# Google Home work-start adapter
+# Google Home work routine adapter
 
 This optional Matter plug is a momentary **work-start** button. An authenticated
 Matter ON command invokes the existing installed `jarvis_work_mode.execute()`;
-it does not duplicate brightness/Wake-on-LAN commands. OFF has no action. The
-adapter does not expose work-end or bypass its voice confirmation.
+it does not duplicate brightness/Wake-on-LAN commands. An explicit Matter OFF
+command requests a work-end confirmation from the running local Jarvis listener.
+It never directly executes shutdown. Attribute resets to OFF have no action.
 
 The plug resets to OFF after the invocation. Concurrent and rapid repeated ONs
 are ignored. Restart sets OFF before attaching the handler and never runs work.
@@ -35,7 +36,18 @@ shows and controls the plug.
 After registration, create a routine with starters `しごとスタート`,
 `仕事スタート`, `しごとはじめ`, and action ON for this plug. Use the exact room and
 device identifier offered by Google's editor; do not guess an unregistered ID.
-No shutdown routine is installed by this component.
+For work-end, create a separate routine with `しごとおわり`, `仕事終わり`, and
+`しごと終わり`, and action OFF for the same plug. Existing pairing is preserved.
+Install `jarvis_control_inbox.py` along with the updated listener and work-end
+module. The adapter uses an owner-only Unix socket, accepts no shell/command
+arguments, drops stale requests, and rate-limits repeated requests.
+
+After the spoken question finishes successfully, Jarvis accepts the exact Japanese
+`はい` once within 12 seconds through its existing microphone. Japanese STT applies
+only to this pending confirmation. Other replies cancel; timeout, restart, failed
+playback, pre-prompt audio, a bare `はい`, and repeated remote OFF cannot authorize
+shutdown. Existing Korean Jarvis confirmation remains unchanged. Google Assistant
+does not need another wake phrase for the local confirmation.
 
 ## Validation
 
@@ -45,7 +57,7 @@ python3 -m unittest discover -s ../tests -p test_google_work_start.py
 ```
 
 Tests inject a mock executor and verify endpoint ON/OFF, reset, restart,
-deduplication, error recovery, and selection of the installed work-start module.
+deduplication, error recovery, local IPC, expiring confirmation, and selection of the installed work-start module.
 Real acceptance requires the user voice command and a fresh `last-start.json`
 receipt plus observed device results. Never report local tests as voice success.
 

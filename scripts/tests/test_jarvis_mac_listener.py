@@ -271,6 +271,7 @@ class VoiceCancelTests(unittest.TestCase):
             stt = MagicMock(); stt.read.return_value = {'text':'자비스 취소'}
             cue = MagicMock(); cue.events = []; cue.ack_first_playing = None
             with patch.object(sys,'argv',['listener','--state-dir',str(root)]), patch.object(sys,'stdin',io.StringIO(json.dumps(event)+'\n')), patch.object(sys,'stdout',io.StringIO()), patch.object(app.signal,'signal'), patch.object(app,'JSONWorker',return_value=stt), patch.object(app,'CastOutput'), patch.object(app,'SpeechQueue',return_value=cue), patch.object(app,'SmartHome') as home, patch.object(app,'CursorQA') as qa, patch.object(app.jarvis_work_end,'Confirmation') as ending:
+                ending.return_value.japanese = False
                 app.main()
             qa.assert_not_called(); home.return_value.plan.assert_not_called()
             cue.submit.assert_called_once_with('취소했습니다.')
