@@ -2,6 +2,41 @@ import AppKit
 import AVFoundation
 import Foundation
 
+// Track the lower envelope even when the initial floor labels ambient sound as
+// speech. Updating only on unvoiced frames locks the gate open in a noisy room.
+struct AdaptiveVoiceGate {
+    let floorDB: Double = -48
+    let marginDB: Double = 8
+    private var history: [(db: Double, seconds: Double)] = []
+    private var historySeconds: Double = 0
+    private var refreshSeconds: Double = 0
+    private(set) var noiseDB: Double = -65
+    var thresholdDB: Double { max(floorDB, noiseDB + marginDB) }
+
+    mutating func isVoiced(db: Double, seconds: Double) -> Bool {
+        guard db.isFinite, seconds.isFinite, seconds > 0 else { return false }
+        history.append((db, seconds))
+        historySeconds += seconds
+        refreshSeconds += seconds
+        while history.count > 1 && historySeconds - history[0].seconds >= 3 {
+            historySeconds -= history.removeFirst().seconds
+        }
+        if historySeconds >= 0.5 && refreshSeconds >= 0.1 {
+            refreshSeconds = 0
+            // A low percentile retains the room baseline across short calls and
+            // syllable peaks; unlike a mean it does not chase each speech peak.
+            let sorted = history.sorted { $0.db < $1.db }
+            let target = historySeconds * 0.2
+            var elapsed = 0.0
+            for frame in sorted {
+                elapsed += frame.seconds
+                if elapsed >= target { noiseDB = frame.db; break }
+            }
+        }
+        return db > thresholdDB
+    }
+}
+
 // Audio remains local. A single completed utterance is handed to the controller;
 // capture stays suspended until that controller explicitly acknowledges readiness.
 final class Listener: NSObject, NSApplicationDelegate {
@@ -46,7 +81,9 @@ final class Listener: NSObject, NSApplicationDelegate {
     private var silentSeconds = 0.0
     private var speechStarted = 0.0
     private var speechEnded = 0.0
-    private var noiseDB = -65.0
+    private var voiceGate = AdaptiveVoiceGate()
+    private var latestNoiseDB = -65.0
+    private var latestThresholdDB = -48.0
     private let voiceFloorDB = -48.0
     private let voiceNoiseMarginDB = 8.0
     private let minimumVoiceSeconds = 0.18
@@ -93,6 +130,7 @@ final class Listener: NSObject, NSApplicationDelegate {
             "updated_wall": Date().timeIntervalSince1970, "sample_rate": sampleRate,
             "rms_db": latestRMS, "peak_db": latestPeak, "meter_updated_wall": meterUpdated,
             "voice_floor_db": voiceFloorDB, "voice_noise_margin_db": voiceNoiseMarginDB,
+            "noise_db": latestNoiseDB, "voice_threshold_db": latestThresholdDB,
             "minimum_voice_seconds": minimumVoiceSeconds, "pre_roll_seconds": preRollSeconds]
         if let bytes = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
             let path = stateDir.appendingPathComponent("native-status.json")
@@ -247,6 +285,8 @@ final class Listener: NSObject, NSApplicationDelegate {
         let duration = Double(chunk.count) / sampleRate
         let power = chunk.reduce(0.0) { $0 + Double($1 * $1) } / Double(chunk.count)
         let db = 10 * log10(max(power, 1e-12))
+        let voiced = voiceGate.isVoiced(db: db, seconds: duration)
+        let noiseDB = voiceGate.noiseDB, thresholdDB = voiceGate.thresholdDB
         if ended - lastMeterEmission >= 1 {
             lastMeterEmission = ended
             let peak = 20 * log10(max(Double(chunk.map { abs($0) }.max() ?? 0), 1e-6))
@@ -254,12 +294,12 @@ final class Listener: NSObject, NSApplicationDelegate {
                 self.latestRMS = db
                 self.latestPeak = peak
                 self.meterUpdated = ended
+                self.latestNoiseDB = noiseDB
+                self.latestThresholdDB = thresholdDB
             }
         }
         let (currentEpoch, enabled) = gateSnapshot()
         guard eligible, enabled, epoch == currentEpoch, accepting else { return }
-        let voiced = db > max(voiceFloorDB, noiseDB + voiceNoiseMarginDB)
-        if !voiced { noiseDB = 0.98 * noiseDB + 0.02 * db }
         if samples.isEmpty {
             if !voiced {
                 preRoll.append(contentsOf: chunk)
@@ -417,9 +457,12 @@ final class Listener: NSObject, NSApplicationDelegate {
     }
 }
 
+#if !VAD_TEST
 umask(0o077)
 signal(SIGPIPE, SIG_IGN)
 let application = NSApplication.shared
 let delegate = Listener()
 application.delegate = delegate
 application.run()
+
+#endif
