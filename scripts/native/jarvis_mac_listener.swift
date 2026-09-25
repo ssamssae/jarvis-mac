@@ -55,7 +55,7 @@ struct MicrophoneRecovery {
 final class Listener: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
     private var pauseItem: NSMenuItem!
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let captureQueue = DispatchQueue(label: "jarvis.capture")
     private let slots = DispatchSemaphore(value: 8)
     private let outputQueue = DispatchQueue(label: "jarvis.controller.output")
@@ -304,16 +304,18 @@ final class Listener: NSObject, NSApplicationDelegate {
             self.resetSegment()
             self.voiceGate = AdaptiveVoiceGate()
         }
-        engine.reset()
+        // reset() retains the old client format (e.g. Bluetooth 24 kHz).
+        // A fresh engine negotiates the newly selected device's hardware format.
+        engine = AVAudioEngine()
         try startMicrophone()
     }
 
     private func startMicrophone() throws {
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        let format = input.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw NSError(domain: "JarvisMic", code: 1) }
         sampleRate = format.sampleRate
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
             guard self.slots.wait(timeout: .now()) == .success else { return }
             let (epoch, eligible) = self.gateSnapshot()
             guard let channels = buffer.floatChannelData else { self.slots.signal(); return }
