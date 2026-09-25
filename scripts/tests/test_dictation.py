@@ -7,6 +7,42 @@ from jarvis_dictation import Dictation, deliver
 
 
 class DictationTest(unittest.TestCase):
+    def test_guided_selection_all_targets(self):
+        for engine, expected_engine in [('코덱스', 'codex'), ('커서', 'cursor'), ('그록', 'grok')]:
+            for node, expected_node in [('헤르메스', 'macbook14'), ('노트북', 'macbook14'), ('아테나', 'mac'), ('볼칸', 'macmini')]:
+                with self.subTest(engine=engine, node=node):
+                    d = Dictation()
+                    self.assertEqual(d.select('음성 입력'), '어디로 연결할까요?')
+                    self.assertIsNone(d.target)
+                    self.assertEqual(d.select(engine), '어떤 노드인가요?')
+                    self.assertEqual(d.select(node), '말씀하세요.')
+                    self.assertFalse(d.selecting)
+                    self.assertEqual(d.target, (expected_node, expected_engine))
+                    self.assertEqual(d.accept('원문 CASE 엔터')[1]['text'], '원문 CASE')
+
+    def test_selection_reprompts_and_cancel(self):
+        d = Dictation()
+        self.assertIsNone(d.select('음성 입력 방법 알려줘'))
+        d.select('음성입력')
+        self.assertIn('코덱스', d.select('선풍기 꺼줘'))
+        self.assertEqual(d.selection_stage, 'engine')
+        d.select('Cursor')
+        self.assertIn('노트북', d.select('페르멘스'))
+        self.assertIsNone(d.target)
+        self.assertIn('취소', d.select('취소', cancelled=True))
+        self.assertFalse(d.selecting)
+        self.assertIsNone(d.selection_engine)
+
+    def test_selection_expiry_and_restart_do_not_reuse_engine(self):
+        d = Dictation(); d.select('음성 입력'); d.select('코덱스')
+        d.selection_until = 0
+        self.assertIn('시간', d.select('노트북'))
+        self.assertIsNone(d.target)
+        self.assertFalse(d.selecting)
+        d.select('음성 입력'); d.select('커서'); d.select('음성 입력')
+        self.assertEqual(d.selection_stage, 'engine')
+        self.assertIsNone(d.selection_engine)
+
     def test_all_targets_and_alias(self):
         for node in ('헤르메스','아테나','볼칸','볼탄'):
             for engine in ('코덱스','그록','커서'):

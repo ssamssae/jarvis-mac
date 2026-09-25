@@ -6,6 +6,39 @@ word `엔터` to send the accumulated text once. `승인 엔터` sends exactly `
 No model interprets or rewrites the dictated content. Approval words are ordinary
 user text, not a permission decision made by this router.
 
+## Guided voice input (T-260925-037)
+
+With microphone permission, the listener running, and `dictation.argv` configured:
+
+1. Say `자비스`, wait for its cue, then say `음성 입력` (or `자비스 음성 입력`).
+2. Jarvis asks `어디로 연결할까요?`. Say `코덱스`, `커서`, or `그록`.
+3. Jarvis asks `어떤 노드인가요?`. Say `헤르메스` or `노트북` for macbook14,
+   `아테나` for mac, or `볼칸` for macmini.
+4. Wait for `말씀하세요.`, dictate the body, and say `엔터` to send it once.
+
+`노트북` is also supported in the existing direct invocation `자비스 노트북 커서`.
+English engine names Codex/Cursor/Grok are accepted. Unknown selection replies
+repeat the current options instead of entering conversation or controlling devices.
+Say `취소` during selection to return to wake listening. Each selection reply has
+30 seconds after its prompt; an expired reply cancels selection without dispatch.
+`음성 입력` during selection starts again from the engine question.
+
+A Cast playback timeout after a selection/dictation prompt has demonstrably
+started preserves that state; it does not resend audio or input. A timeout before
+the prompt starts, or another playback error, cancels selection. The existing
+Cast timeout can still delay readiness; this change does not claim to fix the
+speaker's missing completion signal.
+
+Validation entry: `python3 -m unittest discover -s scripts/tests -p 'test_dictation*.py' -q`.
+The tests cover all three nodes and engines, the notebook alias, literal content,
+unknown replies, cancellation/expiry, and the listener's prompt sequence and
+single mocked delivery. They also cover preserving state only after confirmed
+playback start. No real message or appliance command is sent by these tests.
+Actual user speech and remote receipt for the guided flow require a live trial;
+test success alone does not establish acoustic recognition or delivery.
+Verified on macbook14, 2026-09-25 KST: 185 full-suite tests passed, native Swift
+compilation succeeded, and plist lint passed in this change worktree.
+
 The observed STT spelling `헬멧스` is an explicit alias for `헤르메스` only in a
 complete node + engine invocation. `헬멧스 코덱스가 뭐야` remains conversation;
 dictated content is never corrected using this alias.
