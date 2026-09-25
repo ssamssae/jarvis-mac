@@ -87,7 +87,8 @@ final class Listener: NSObject, NSApplicationDelegate {
     private let converterLock = NSLock()
     private var activeConverter: Process?
     private var converterShuttingDown = false
-    private var pendingWav: URL?
+    private var pendingWavs: [URL] = []
+    private var dictationID = ""
     // Only captureQueue accesses these values.
     private var accepting = false
     private var sampleRate: Double = 48000
@@ -252,16 +253,22 @@ final class Listener: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.async {
                         guard !self.quitting else { return }
                         if let listen = event["listen"] as? Bool {
-                            if listen { self.removePendingWav() }
+                            let nextID = event["dictation_id"] as? String ?? ""
+                            self.gateLock.lock()
+                            let changedID = self.dictationID != nextID
+                            self.dictationID = nextID
+                            self.gateLock.unlock()
+                            if listen && nextID.isEmpty { self.removePendingWav() }
+                            let changed = self.controllerReady != listen || changedID
                             self.controllerReady = listen
-                            self.updateCapture()
+                            if changed { self.updateCapture() }
                         }
                         if let state = event["state"] as? String, !self.manuallyPaused, self.microphoneReady, self.fatalStatus == nil {
                             // Only short status labels, never model output or recognized speech.
                             let labels = ["ready": "호출 대기", "listening": "호출 대기", "processing": "처리 중",
                                           "speaking": "응답 재생", "error": "오류", "waiting_question": "질문 대기",
                                           "preparing": "준비 중", "recognizing": "음성 인식 중",
-                                          "answering": "답변 생성 중", "armed": "질문 대기", "stopped": "중지됨"]
+                                          "dictating": "받아쓰기 중 · 엔터로 전송", "answering": "답변 생성 중", "armed": "질문 대기", "stopped": "중지됨"]
                             if let label = labels[state] { self.status(label) }
                         }
                     }
@@ -373,21 +380,29 @@ final class Listener: NSObject, NSApplicationDelegate {
         else { silentSeconds += duration }
         guard silentSeconds >= 0.8 || Double(samples.count) / sampleRate >= 12 else { return }
         guard voicedSeconds >= minimumVoiceSeconds else { resetSegment(); return }
-        accepting = false
-        setGate(false)
+        gateLock.lock()
+        let captureID = dictationID
+        gateLock.unlock()
+        if captureID.isEmpty {
+            accepting = false
+            setGate(false)
+        }
         let captured = samples, started = speechStarted, lastVoice = speechEnded
         resetSegment()
-        DispatchQueue.main.async { self.controllerReady = false; self.status("음성 인식 중") }
+        if captureID.isEmpty {
+            DispatchQueue.main.async { self.controllerReady = false; self.status("음성 인식 중") }
+        }
         var writtenWav: URL?
         do {
             let wav = try writeWav(captured)
             writtenWav = wav
             converterLock.lock()
             let shuttingDown = converterShuttingDown
-            pendingWav = wav
+            pendingWavs.removeAll { !FileManager.default.fileExists(atPath: $0.path) }
+            pendingWavs.append(wav)
             converterLock.unlock()
             guard !shuttingDown, let pipe = inputPipe else { throw NSError(domain: "JarvisAudio", code: 3) }
-            let message: [String: Any] = ["wav": wav.path, "speech_started_wall": started,
+            let message: [String: Any] = ["wav": wav.path, "dictation_id": captureID, "speech_started_wall": started,
                                           "speech_ended_wall": lastVoice, "capture_ended_wall": ended]
             var bytes = try JSONSerialization.data(withJSONObject: message)
             bytes.append(10)
@@ -454,10 +469,10 @@ final class Listener: NSObject, NSApplicationDelegate {
 
     private func removePendingWav() {
         converterLock.lock()
-        let wav = pendingWav
-        pendingWav = nil
+        let wavs = pendingWavs
+        pendingWavs = []
         converterLock.unlock()
-        if let wav = wav { try? FileManager.default.removeItem(at: wav) }
+        for wav in wavs { try? FileManager.default.removeItem(at: wav) }
     }
     private func waitForExit(_ process: Process, seconds: Double) -> Bool {
         let deadline = ProcessInfo.processInfo.systemUptime + seconds

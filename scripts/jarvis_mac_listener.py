@@ -21,6 +21,7 @@ from jarvis_status_light import StatusLight
 import jarvis_work_mode
 import jarvis_work_end
 from jarvis_control_inbox import events as control_events
+from jarvis_dictation import Dictation, deliver
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -105,7 +106,7 @@ def atomic_json(path, value):
     tmp.replace(path)
 
 
-def checked_audio(event, audio_dir):
+def checked_audio(event, audio_dir, max_age=20):
     path = Path(event['wav'])
     if path.is_symlink() or path.parent.resolve() != audio_dir.resolve() or path.suffix != '.wav':
         raise ValueError('invalid_audio_path')
@@ -116,7 +117,7 @@ def checked_audio(event, audio_dir):
             raise ValueError('invalid_capture_timing')
     if not event['speech_started_wall'] <= event['speech_ended_wall'] <= event['capture_ended_wall']:
         raise ValueError('invalid_capture_order')
-    if not 0 <= time.time() - event['capture_ended_wall'] < 20:
+    if not 0 <= time.time() - event['capture_ended_wall'] < max_age:
         raise ValueError('stale_capture')
     return path
 
@@ -186,6 +187,7 @@ def main():
         raise SystemExit('listener_already_running')
     config = json.loads((root/'config.json').read_text())
     gate = WakeGate()
+    dictation = Dictation()
     work_end = jarvis_work_end.Confirmation()
     home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
@@ -220,22 +222,31 @@ def main():
         for event in control_events(sys.stdin, root):
             external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
             if external_end:
-                if time.monotonic() < work_end.until:
-                    continue  # A repeated remote request never extends a confirmation.
+                if dictation.target or time.monotonic() < work_end.until:
+                    continue
                 text, kind, question, stt_s = '', 'question', '일 끝', 0
                 gate.armed_until = 0
             else:
-                path = checked_audio(event, audio_dir)
-                state('recognizing', False)
+                # Audio captured for an ended dictation must never become a new command.
+                capture_id = event.get('dictation_id', '')
+                if capture_id and capture_id != dictation.request_id:
+                    path = Path(event['wav'])
+                    if path.parent.resolve() == audio_dir.resolve() and path.suffix == '.wav':
+                        path.unlink(missing_ok=True)
+                    continue
+                path = checked_audio(event, audio_dir, max_age=300 if capture_id else 20)
+                state('dictating' if dictation.target else 'recognizing', bool(dictation.target),
+                      dictation_id=dictation.request_id or '')
                 began = time.monotonic()
                 try:
                     text = transcribe_for_gate(stt, path, gate,
                                                english_retry=not config.get('stt_worker'),
                                                speech_seconds=event['speech_ended_wall'] - event['speech_started_wall'],
-                                               japanese_confirmation=work_end.japanese and time.monotonic() < work_end.until)
+                                               japanese_confirmation=not dictation.target and work_end.japanese and time.monotonic() < work_end.until)
                 except (RuntimeError, KeyError, ValueError, OSError) as exc:
                     # An STT rejection must consume confirmation, not kill the listener.
                     work_end.cancel()
+                    dictation.cancel()
                     gate.armed_until = 0
                     indicator.release()
                     atomic_json(root/'last-stt-error.json', {
@@ -249,6 +260,47 @@ def main():
                 finally:
                     path.unlink(missing_ok=True)
                 stt_s = time.monotonic() - began
+                if dictation.target:
+                    action, request = dictation.accept(text)
+                    if action == 'collecting':
+                        atomic_json(root/'dictation-draft.json', {'id':dictation.request_id, 'node':dictation.target[0], 'engine':dictation.target[1], 'text':' '.join(dictation.parts)})
+                        continue
+                    state('speaking', False, dictation_id='')
+                    if action == 'submit':
+                        # Save privately before transport; preserve on failure, never replay automatically.
+                        pending_dir = root/'pending-dictations'
+                        pending_dir.mkdir(exist_ok=True, mode=0o700)
+                        pending_path = pending_dir/(request['id']+'.json')
+                        atomic_json(pending_path, request)
+                        (root/'dictation-draft.json').unlink(missing_ok=True)
+                        result = deliver(config.get('dictation'), request)
+                        atomic_json(root/'last-dictation.json', {'id':request['id'], 'node':request['node'],
+                                    'engine':request['engine'], **result})
+                        if result['status'] == 'submitted':
+                            pending_path.unlink(missing_ok=True)
+                            answer = '전송했습니다.'
+                        else:
+                            answer = '전송을 확인하지 못했어요. 받아쓴 내용은 보관했습니다.'
+                    elif action == 'cancelled':
+                        (root/'dictation-draft.json').unlink(missing_ok=True)
+                        answer = '받아쓰기를 취소했습니다.'
+                    else:
+                        answer = '아직 받아쓴 내용이 없어요. 말씀하세요.'
+                    cue = None
+                    try:
+                        cue = SpeechQueue(cast_session.directory, cast_session.connect({}), voice=config.get('voice','Yuna'))
+                        active_speech = cue
+                        cue.submit(answer)
+                        cue.finish()
+                    except Exception:
+                        cast_session.invalidate()
+                        if cue: cue.abort()
+                    finally:
+                        active_speech = None
+                        cast_session.clear_audio()
+                    state('dictating' if dictation.target else 'listening', True,
+                          dictation_id=dictation.request_id or '')
+                    continue
                 kind, question = gate.accept(text, time.monotonic())
             if WAKE.match(text) or KOREAN_WAKE.match(text):
                 indicator.show('blue')
@@ -322,7 +374,17 @@ def main():
                     ending = work_end.accept(question, time.monotonic(), event['speech_started_wall'])
                     work = jarvis_work_mode.matches(question)
                     weather = weather_reply(question, config.get('weather')) if plan is None and not work and ending is None else None
-                    if ending is not None:
+                    if dictation.start(question):
+                        if not config.get('dictation', {}).get('argv'):
+                            dictation.cancel()
+                            answer = '음성 입력 연결이 아직 설정되지 않았어요.'
+                        else:
+                            answer = '말씀하세요.'
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'dictation'}, answer=answer)
+                        speech.submit(answer)
+                        speech.finish()
+                    elif ending is not None:
                         require_indicator_release(indicator, speech, receipt)
                         if ending == 'execute':
                             result = jarvis_work_end.execute(config.get('work_end'))
@@ -376,6 +438,7 @@ def main():
                 # No replay/retry within a turn: reconnect only on the next question.
                 cast_session.invalidate()
                 work_end.cancel()
+                dictation.cancel()
                 receipt['result'] = 'error'
                 # Avoid raw provider output, credentials, or unrelated source paths.
                 receipt['error_type'] = type(exc).__name__
@@ -409,7 +472,7 @@ def main():
             if remaining:
                 gate.armed_until = work_end.until
                 indicator.show('green', ttl=remaining)
-            state('armed' if remaining else 'listening', True, armed_seconds=remaining, last_result=receipt['result'])
+            state('dictating' if dictation.target else ('armed' if remaining else 'listening'), True, dictation_id=dictation.request_id or '', armed_seconds=remaining, last_result=receipt['result'])
     except (KeyboardInterrupt, BrokenPipeError):
         pass
     finally:
