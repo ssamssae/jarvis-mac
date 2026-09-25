@@ -117,3 +117,13 @@ notebook and cancel correctly with hints. Synthetic silence and an unrelated
 appliance phrase did not decode into valid engines. These are controlled fixtures,
 not a measured human recognition rate. Repeat the live speaker-to-microphone flow
 after installation to assess acoustic performance; retain the actual outcome.
+
+
+## Nest start (T-260925-041)
+
+With the paired Matter voice outlet and the separate Google Home starter enabled,
+say `OK Google、メモスタート` (메모 스타토). Only this initial invocation uses Nest.
+After `어디로 연결할까요?`, engine/node selection and body use Athena's existing
+microphone and STT. See [Matter adapter setup and live acceptance](../scripts/google-home/README.md#nest-starts-voice-input-athena-captures-everything-afterward-t-260925-041).
+The setup being present is not proof that the Google Home routine has been
+registered or heard; retain the actual live result separately.

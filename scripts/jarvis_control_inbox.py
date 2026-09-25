@@ -20,7 +20,7 @@ def events(stream, root):
     path.unlink(missing_ok=True)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     buffer = b''
-    last_request = -float('inf')
+    last_request = {}
     try:
         server.bind(str(path))
         path.chmod(0o600)
@@ -46,17 +46,18 @@ def events(stream, root):
                             message = reader.readline(256)
                         request = json.loads(message)
                         created = request.get('created_at')
-                        accepted = (request.get('intent') == 'work_end'
+                        intent = request.get('intent')
+                        accepted = (intent in ('work_end', 'dictation_start')
                                     and isinstance(created, (float, int))
                                     and 0 <= time.time() - created < 3
-                                    and time.monotonic() - last_request >= 15)
+                                    and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
                         client.sendall(b'queued\n' if accepted else b'rejected\n')
                     except (OSError, ValueError, AttributeError):
                         accepted = False
                 if accepted:
-                    last_request = time.monotonic()
+                    last_request[intent] = time.monotonic()
                     now = time.time()
-                    yield {'source': 'google-home-matter', 'intent': 'work_end',
+                    yield {'source': 'google-home-matter', 'intent': intent,
                            'speech_started_wall': now, 'speech_ended_wall': now,
                            'capture_ended_wall': now}
     finally:

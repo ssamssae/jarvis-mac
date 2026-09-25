@@ -11,6 +11,9 @@ import jarvis_mac_listener as listener
 
 
 class ListenerDictationTest(unittest.TestCase):
+    def test_matter_only_starts_then_local_microphone_selects_and_dictates(self):
+        self.check_flow([None, None, '코덱스', '노트북', None, '승인', '', '엔터'],
+                        ['armed', 'armed', 'armed', 'dictating', 'dictating', 'dictating', 'dictating'], guided=True)
     def test_named_target_multisegment_literal_approval_and_single_enter(self):
         self.check_named_target('자비스 헤르메스 코덱스')
 
@@ -63,7 +66,7 @@ class ListenerDictationTest(unittest.TestCase):
                 speech.finish.side_effect = TimeoutError('cast_playback_timeout')
             indicator = Mock()
             stt = Mock()
-            stt.read.side_effect = [{'text':s} for s in transcripts]
+            stt.read.side_effect = [{'text':s} for s in transcripts if s is not None]
             requests = []
             final_states = []
             def deliver(config, request):
@@ -81,6 +84,9 @@ class ListenerDictationTest(unittest.TestCase):
                         self.assertTrue(state['listen'])
                         self.assertEqual(state['state'], expected_states[index-1])
                         event['dictation_id'] = state.get('dictation_id', '')
+                    if transcripts[index] is None:
+                        event = dict(source='google-home-matter', intent='dictation_start',
+                                     speech_started_wall=now, speech_ended_wall=now, capture_ended_wall=now)
                     yield event
                 final_states.append(json.loads((root/'status.json').read_text()))
             with patch.object(sys, 'argv', ['listener', '--state-dir', directory]), \
