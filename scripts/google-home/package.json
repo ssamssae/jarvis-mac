@@ -1,0 +1,12 @@
+{
+  "name": "jarvis-google-home",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@matter/main": "0.17.9"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  }
+}
