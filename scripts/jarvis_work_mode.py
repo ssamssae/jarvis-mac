@@ -6,12 +6,12 @@ import subprocess
 
 
 def matches(text):
-    return re.sub(r'[\s,.!?，。！？]','',text) in {'일하자','일시작하자','작업시작하자'}
+    return re.sub(r'[\s,.!?，。！？]','',text) in {'시고토스타토', 'しごとスタート', 'しごとすたーと', '仕事スタート'}
 
 
 def execute(config, runner=subprocess.run):
     if not config or not isinstance(config.get('steps'),list) or not 1 <= len(config['steps']) <= 4:
-        return {'intent':'work_mode','status':'unconfigured','answer':'일하자 루틴이 아직 설정되지 않았어요.','steps':[]}
+        return {'intent':'work_mode','status':'unconfigured','answer':'작업 시작 루틴이 아직 설정되지 않았어요.','steps':[]}
     def step(item):
         name=item.get('name','기기');kind=item.get('kind');argv=item.get('argv')
         if not isinstance(argv,list) or not argv or not all(isinstance(x,str) and x for x in argv):

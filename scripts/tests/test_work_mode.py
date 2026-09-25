@@ -10,8 +10,8 @@ from jarvis_display_brightness import brightness
 
 class WorkTests(unittest.TestCase):
     def test_only_exact_commands(self):
-        for text in ['일하자','일 시작하자!','작업 시작하자']:self.assertTrue(matches(text))
-        for text in ['일하자라고 말해','일하지마','내일하자','일하자 그리고 물줘']:self.assertFalse(matches(text))
+        for text in ['시고토 스타토', '시고토스타토!', 'しごとスタート', '仕事 スタート', 'しごとすたーと']:self.assertTrue(matches(text))
+        for text in ['일하자', '일 시작하자', '작업 시작하자', '시고토 스타토라고 말해', '시고토 스타토 하지마', '시고토 스타토 그리고 물줘']:self.assertFalse(matches(text))
     def test_fixed_argv_and_verified_brightness(self):
         run=Mock(return_value=subprocess.CompletedProcess([],0,json.dumps({'verified':True,'level':6}),''))
         result=execute({'steps':[{'name':'맥','kind':'brightness','argv':['python3','helper.py','--level','6']}]},run)
@@ -45,7 +45,7 @@ class WorkRoutingTests(unittest.TestCase):
             root=Path(d);(root/'audio').mkdir();clip=root/'audio'/'one.wav';clip.write_bytes(b'x'*44)
             (root/'config.json').write_text(json.dumps({'cast_name':'fixture','model':'fixture','work_mode':{'steps':[]}}))
             now=time.time();event={'wav':str(clip),'speech_started_wall':now-2,'speech_ended_wall':now-1,'capture_ended_wall':now}
-            stt=MagicMock();stt.read.return_value={'text':'자비스 일하자'}
+            stt=MagicMock();stt.read.return_value={'text':'자비스 시고토 스타토'}
             home=MagicMock();home.plan.return_value=None
             speech=MagicMock();speech.first_playing=None;speech.ack_first_playing=None;speech.events=[]
             indicator=MagicMock();order=[];indicator.release.side_effect=lambda:order.append('release') or True
