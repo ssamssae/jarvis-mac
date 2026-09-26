@@ -158,3 +158,17 @@ is resolved. This preserves the display proof after the session file descriptor
 closes. On an EOF attach the viewer recovers only a matched voice input card,
 including completed first turns, and persists a per-event display key to prevent
 duplicates. Ordinary historical user messages are not echoed by this recovery.
+
+## Damaged native input recovery (T-260926-017)
+
+Prerequisite: Python listener receiving newline-delimited native microphone events.
+Entry: the existing `jarvis_control_inbox.events` input boundary. In an isolated
+pipe, send malformed JSON, non-object JSON and invalid UTF-8, then a valid event.
+Expected: invalid records are ignored and the next valid event is yielded once;
+the owner-only socket is removed on EOF. Local prompt freshness and duplicate
+suppression remain unchanged.
+
+Verified on Athena, 2026-09-26 KST: `python3 -m unittest discover -s scripts/tests -q`
+passed 200 tests, including `test_control_inbox.py`. Fixtures do not send messages,
+play audio or control appliances. Live Japanese work-end speech, playback and
+microphone recovery require approved installation and a separate voice trial.

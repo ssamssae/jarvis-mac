@@ -14,6 +14,15 @@ from jarvis_control_inbox import events
 
 
 class InboxTests(unittest.TestCase):
+    def test_malformed_native_lines_do_not_end_following_voice_events(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as root:
+            r, w = os.pipe()
+            os.write(w, b'not-json\n[]\nnull\n\xff\n{"wav":"next-valid"}\n')
+            os.close(w)
+            with os.fdopen(r) as source:
+                self.assertEqual(list(events(source, root)), [{'wav': 'next-valid'}])
+            self.assertFalse((Path(root) / 'work-end.sock').exists())
+
     def test_local_socket_rejects_stale_wrong_and_duplicate_requests(self):
         # macOS AF_UNIX paths have a small length limit.
         with tempfile.TemporaryDirectory(dir='/tmp') as d:
