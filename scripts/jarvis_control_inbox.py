@@ -8,13 +8,24 @@ import socket
 import time
 
 
+def _native_event(line):
+    """A damaged native event must not disconnect subsequent microphone events."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    return event if isinstance(event, dict) else None
+
+
 def events(stream, root):
     # In-memory streams are used by controller tests, never by the native app.
     try:
         fd = stream.fileno()
     except (AttributeError, io.UnsupportedOperation):
         for line in stream:
-            yield json.loads(line)
+            event = _native_event(line)
+            if event is not None:
+                yield event
         return
     path = Path(root) / 'work-end.sock'
     path.unlink(missing_ok=True)
@@ -35,7 +46,9 @@ def events(stream, root):
                 buffer += chunk
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
-                    yield json.loads(line)
+                    event = _native_event(line)
+                    if event is not None:
+                        yield event
             if server in ready:
                 accepted = False
                 client, _ = server.accept()
