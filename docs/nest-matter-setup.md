@@ -149,3 +149,26 @@ Mac 앱은 기존 호출명 “자비스” 뒤에 “시고토 스타토” 또
 “일본어”는 모드를 켜지 않습니다. 사용자 지정 STT는 전환 미지원 안내를 냅니다.
 검증 경로: 호출→일본어 안내→명령→종료 질문→예/네; last-turn.json의
 stt_language와 route를 대조합니다. 실제 사용자 재발화는 별도 확인합니다.
+
+
+## 집사리모컨 공통 처리 경로 (T-260927-036)
+
+사전 조건: 새 inbox/listener와 집사리모컨 어댑터가 함께 설치되어 있어야 한다.
+기존 owner-only `work-end.sock`은 source=butler-remote의 고정 intent
+scene_game/scene_sleep/scene_away/work_start/work_end를 받는다. 자유 텍스트,
+물 토출, 임의 명령은 받지 않는다. 기존 dictation_start와 Google Home 경로는 유지한다.
+
+집사리모컨의 게임할거야·잘거야·외출 버튼은 각각 기존 한국어 명령 처리에
+연결되어 SmartHome 실행 뒤 SpeechQueue가 같은 응답을 재생한다. 작전시작은
+기존 work_mode 실행·음성 안내, 작전종료는 기존 종료 질문과 `はい` 확인을 거친다.
+작전종료 버튼의 앱 확인만으로 종료 함수를 실행하지 않는다.
+
+확인 순서: listener 준비 → 버튼 1회 → 접수 안내 → 네스트 응답 확인 →
+last-turn.json의 input_kind=butler-remote, pipeline.route, result 확인.
+접수 성공은 실행·청취 완료가 아니다. 음성 입력이나 확인 대기 중인 요청은
+기존 busy 처리에 따라 실행되지 않을 수 있다. 가전 재실행으로 확인하지 않는다.
+
+2026-09-27: test_butler_listener.py는 실제 listener 분기에서 외부 가전·Cast만
+mock하여 씬/작업시작의 실행과 음성, 종료 확인, 미설정 씬, 음성 실패 시 무재시도를
+검사한다. test_control_inbox.py는 임시 실제 Unix socket에서 허용 목록·중복·유효기간을
+검사한다. 운영 설치·재시작·휴대폰 조작·음성 청취는 수행하지 않았다.

@@ -56,13 +56,24 @@ class InboxTests(unittest.TestCase):
                     input_adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(input_adapter)
                     self.assertTrue(input_adapter.request(root))
                     self.assertFalse(input_adapter.request(root))
+                    for intent in ('scene_game', 'scene_sleep', 'scene_away', 'work_start'):
+                        payload = {'source':'butler-remote', 'intent':intent, 'created_at':time.time()}
+                        self.assertEqual(send(payload), b'queued\n')
+                        self.assertEqual(send(payload), b'rejected\n')
+                    for intent in ('water', 'execute', 'scene_arbitrary', ['scene_game']):
+                        self.assertEqual(send({'source':'butler-remote', 'intent':intent,
+                                               'created_at':time.time()}), b'rejected\n')
+                    self.assertEqual(send({'intent':'scene_game','created_at':time.time()}), b'rejected\n')
                     os.write(w, b'{"wav":"fixture"}\n')
                 finally:
                     os.close(w)
                     worker.join(timeout=3)
                 self.assertFalse(worker.is_alive())
-                self.assertEqual(len(seen), 3)
+                self.assertEqual(len(seen), 7)
                 self.assertEqual(seen[0]['intent'], 'work_end')
                 self.assertEqual(seen[1]['intent'], 'dictation_start')
-                self.assertEqual(seen[2], {'wav': 'fixture'})
+                self.assertEqual([row['intent'] for row in seen[2:6]],
+                                 ['scene_game','scene_sleep','scene_away','work_start'])
+                self.assertTrue(all(row['source'] == 'butler-remote' for row in seen[2:6]))
+                self.assertEqual(seen[6], {'wav': 'fixture'})
                 self.assertFalse(path.exists())
