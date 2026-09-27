@@ -20,7 +20,7 @@ from jarvis_weather import weather_reply
 from jarvis_status_light import StatusLight
 import jarvis_work_mode
 import jarvis_work_end
-from jarvis_control_inbox import events as control_events
+from jarvis_control_inbox import BUTLER_PHRASES, events as control_events
 from jarvis_dictation import Dictation, deliver
 from whisper_cpp_worker import worker_command
 
@@ -225,12 +225,14 @@ def main():
               startup_prepare_error=cast_session.startup_prepare_error)
         for event in control_events(sys.stdin, root):
             japanese_command = False
-            external_end = event.get('source') == 'google-home-matter' and event.get('intent') == 'work_end'
+            butler_phrase = BUTLER_PHRASES.get(event.get('intent')) if event.get('source') == 'butler-remote' else None
+            external_scene = bool(butler_phrase and event['intent'].startswith('scene_'))
+            external_end = event.get('source') in {'google-home-matter', 'butler-remote'} and event.get('intent') == 'work_end'
             external_dictation = event.get('source') == 'google-home-matter' and event.get('intent') == 'dictation_start'
-            if external_end or external_dictation:
+            if external_end or external_dictation or butler_phrase:
                 if dictation.target or dictation.selecting or time.monotonic() < max(work_end.until, japanese_command_until):
                     continue
-                text, kind, question, stt_s = '', 'question', '보이스 스타토' if external_dictation else '시고토 오와리', 0
+                text, kind, question, stt_s = '', 'question', butler_phrase or ('보이스 스타토' if external_dictation else '시고토 오와리'), 0
                 gate.armed_until = 0
             else:
                 # Audio captured for an ended dictation must never become a new command.
@@ -372,7 +374,7 @@ def main():
                 continue
             indicator.show('yellow')
             state('answering', False)
-            receipt = {'input_kind':'google-home-matter' if external_end or external_dictation else 'microphone', 'wake_mode':'local_transcription_utterance_prefix',
+            receipt = {'input_kind':event['source'] if external_end or external_dictation or butler_phrase else 'microphone', 'wake_mode':'local_transcription_utterance_prefix',
                        'recognized_text':text, 'question':question, 'stt_s':stt_s,
                        'configured_voice':config.get('voice', 'Yuna'),
                        'speech_started_wall':event['speech_started_wall'],
@@ -451,6 +453,12 @@ def main():
                         pipeline = receipt['pipeline']
                         pipeline.update(route={'intent':'work_mode'}, answer=result['answer'])
                         speech.submit(result['answer'])
+                        speech.finish()
+                    elif external_scene and plan is None:
+                        answer = '요청한 씬이 자비스에 설정되지 않았어요.'
+                        pipeline = receipt['pipeline']
+                        pipeline.update(route={'intent':'scene_unconfigured'}, answer=answer)
+                        speech.submit(answer)
                         speech.finish()
                     elif weather is not None:
                         receipt['weather'] = weather

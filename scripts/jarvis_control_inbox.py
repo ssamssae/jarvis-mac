@@ -8,6 +8,12 @@ import socket
 import time
 
 
+# Fixed button intents share the listener's normal dispatch and speech path.
+BUTLER_PHRASES = {'scene_game': '게임할거야', 'scene_sleep': '잘거야',
+                  'scene_away': '외출', 'work_start': '시고토스타토',
+                  'work_end': '시고토 오와리'}
+
+
 def _native_event(line):
     """A damaged native event must not disconnect subsequent microphone events."""
     try:
@@ -60,7 +66,10 @@ def events(stream, root):
                         request = json.loads(message)
                         created = request.get('created_at')
                         intent = request.get('intent')
-                        accepted = (intent in ('work_end', 'dictation_start')
+                        source = request.get('source', 'google-home-matter')
+                        allowed = (isinstance(intent, str) and intent in BUTLER_PHRASES if source == 'butler-remote'
+                                   else source == 'google-home-matter' and intent in ('work_end', 'dictation_start'))
+                        accepted = (allowed
                                     and isinstance(created, (float, int))
                                     and 0 <= time.time() - created < 3
                                     and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
@@ -70,7 +79,7 @@ def events(stream, root):
                 if accepted:
                     last_request[intent] = time.monotonic()
                     now = time.time()
-                    yield {'source': 'google-home-matter', 'intent': intent,
+                    yield {'source': source, 'intent': intent,
                            'speech_started_wall': now, 'speech_ended_wall': now,
                            'capture_ended_wall': now}
     finally:
