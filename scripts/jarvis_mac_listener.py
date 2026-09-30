@@ -110,6 +110,8 @@ def atomic_json(path, value):
 
 
 def checked_audio(event, audio_dir, max_age=20):
+    if not isinstance(event.get('wav'), str):
+        raise ValueError('invalid_audio_path')
     path = Path(event['wav'])
     if path.is_symlink() or path.parent.resolve() != audio_dir.resolve() or path.suffix != '.wav':
         raise ValueError('invalid_audio_path')
@@ -123,6 +125,27 @@ def checked_audio(event, audio_dir, max_age=20):
     if not 0 <= time.time() - event['capture_ended_wall'] < max_age:
         raise ValueError('stale_capture')
     return path
+
+
+def record_controller_error(root, exc, stage):
+    # Never persist exception messages, paths, provider output or transcripts.
+    code = str(exc) if type(exc) is ValueError and str(exc) in {
+        'invalid_audio_path', 'invalid_audio_file', 'invalid_capture_timing',
+        'invalid_capture_order', 'stale_capture'} else 'controller_error'
+    with contextlib.suppress(OSError):
+        atomic_json(root/'last-controller-error.json', {
+            'stage': stage, 'error_type': type(exc).__name__, 'code': code,
+            'pid': os.getpid(), 'finished_wall': time.time()})
+
+
+def discard_audio(event, audio_dir):
+    # Delete only a rejected local clip, never an arbitrary event-supplied path.
+    with contextlib.suppress(ValueError, TypeError, OSError):
+        raw = event.get('wav')
+        if not isinstance(raw, str): return
+        path = Path(raw)
+        if path.parent.resolve() == audio_dir.resolve() and path.suffix == '.wav':
+            path.unlink(missing_ok=True)
 
 
 class CastSession:
@@ -195,7 +218,7 @@ def main():
     japanese_command_until = 0.0
     home = SmartHome(config.get("smart_home"))
     def state(name, listen, **extra):
-        payload = {'state':name, 'listen':listen, 'updated_at':time.time(), 'pid':os.getpid(), **extra}
+        payload = {'state':name, 'listen':listen, 'updated_at':time.time(), 'pid':os.getpid(), 'process_group':os.getpgrp(), **extra}
         atomic_json(root/'status.json', payload)
         print(json.dumps(payload, ensure_ascii=False), flush=True)
     active_speech = None
@@ -235,14 +258,23 @@ def main():
                 text, kind, question, stt_s = '', 'question', butler_phrase or ('보이스 스타토' if external_dictation else '시고토 오와리'), 0
                 gate.armed_until = 0
             else:
-                # Audio captured for an ended dictation must never become a new command.
-                capture_id = event.get('dictation_id', '')
-                if capture_id and capture_id != dictation.request_id:
-                    path = Path(event['wav'])
-                    if path.parent.resolve() == audio_dir.resolve() and path.suffix == '.wav':
+                # Reject one broken capture without taking down the controller.
+                try:
+                    capture_id = event.get('dictation_id', '')
+                    path = checked_audio(event, audio_dir, max_age=300 if capture_id else 20)
+                    if capture_id and capture_id != dictation.request_id:
                         path.unlink(missing_ok=True)
+                        continue
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    work_end.cancel()
+                    dictation.cancel()
+                    gate.armed_until = 0
+                    japanese_command_until = 0
+                    indicator.release()
+                    record_controller_error(root, exc, 'capture')
+                    discard_audio(event, audio_dir)
+                    state('listening', True, last_result='capture_rejected')
                     continue
-                path = checked_audio(event, audio_dir, max_age=300 if capture_id else 20)
                 state('dictating' if dictation.target else 'recognizing', bool(dictation.target),
                       dictation_id=dictation.request_id or '')
                 began = time.monotonic()
@@ -544,8 +576,11 @@ def main():
             state('dictating' if dictation.target else ('armed' if remaining or dictation.selecting else 'listening'), True,
                   dictation_id=dictation.request_id or '', selection_stage=dictation.selection_stage,
                   armed_seconds=30 if dictation.selecting else remaining, last_result=receipt['result'])
-    except (KeyboardInterrupt, BrokenPipeError):
-        pass
+    except (KeyboardInterrupt, BrokenPipeError) as exc:
+        record_controller_error(root, exc, 'shutdown')
+    except Exception as exc:
+        record_controller_error(root, exc, 'controller')
+        raise
     finally:
         indicator.close()
         if qa: qa.close()
@@ -559,4 +594,7 @@ def main():
 
 
 if __name__ == '__main__':
+    # Isolate owned workers so the native supervisor can reap them after a crash.
+    if os.getpgrp() != os.getpid():
+        os.setsid()
     main()

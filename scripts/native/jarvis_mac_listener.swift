@@ -50,6 +50,23 @@ struct MicrophoneRecovery {
     }
 }
 
+// A short-lived successful startup must not reset a crash loop's budget.
+struct ControllerRecovery {
+    private(set) var attempts = 0
+    private var readySince: Double?
+    mutating func ready(at now: Double) {
+        if readySince == nil { readySince = now }
+    }
+    mutating func nextDelay(at now: Double) -> Double? {
+        if let since = readySince, now - since >= 300 { attempts = 0 }
+        readySince = nil
+        guard attempts < 3 else { return nil }
+        let delay = pow(2.0, Double(attempts))
+        attempts += 1
+        return delay
+    }
+}
+
 // Audio remains local. A single completed utterance is handed to the controller;
 // capture stays suspended until that controller explicitly acknowledges readiness.
 final class Listener: NSObject, NSApplicationDelegate {
@@ -59,10 +76,18 @@ final class Listener: NSObject, NSApplicationDelegate {
     private let captureQueue = DispatchQueue(label: "jarvis.capture")
     private let slots = DispatchSemaphore(value: 8)
     private let outputQueue = DispatchQueue(label: "jarvis.controller.output")
+    private var controllerConfigRoot = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/JarvisMacOSS")
+    private var ownedControllerGroup: Int32?
+    private var controllerRecovery = ControllerRecovery()
+    private var recoveringController = false
+    private var controllerGeneration: UInt64 = 0
+    private var controllerLaunchTime = 0.0
+    private var controllerHasBeenReady = false
+    private var controllerRestartCount = 0
     private var child: Process?
     private var inputPipe: Pipe?
     private var outputPipe: Pipe?
-    private var outputData = Data()
     private var stateDir = URL(fileURLWithPath: "")
     private var manuallyPaused = false
     private var controllerReady = false
@@ -124,6 +149,10 @@ final class Listener: NSObject, NSApplicationDelegate {
         status("준비 중")
         do { try launchController() } catch { fail("설정/컨트롤러 오류"); return }
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            if !self.recoveringController && !self.controllerHasBeenReady && self.fatalStatus == nil
+                && ProcessInfo.processInfo.systemUptime - self.controllerLaunchTime > 60 {
+                self.recoverController(reason: "startup_timeout")
+            }
             self.recoverMicrophoneIfNeeded()
             self.writeStatus()
         }
@@ -152,6 +181,10 @@ final class Listener: NSObject, NSApplicationDelegate {
             "voice_floor_db": voiceFloorDB, "voice_noise_margin_db": voiceNoiseMarginDB,
             "noise_db": latestNoiseDB, "voice_threshold_db": latestThresholdDB,
             "microphone_recovery_count": microphoneRecoveryCount,
+            "controller_restart_count": controllerRestartCount,
+            "controller_recovery_attempts": controllerRecovery.attempts,
+            "controller_recovering": recoveringController,
+            "controller_pid": child?.isRunning == true ? child!.processIdentifier : 0,
             "minimum_voice_seconds": minimumVoiceSeconds, "pre_roll_seconds": preRollSeconds]
         if let bytes = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
             let path = stateDir.appendingPathComponent("native-status.json")
@@ -190,13 +223,13 @@ final class Listener: NSObject, NSApplicationDelegate {
         updateCapture()
     }
     private func updateCapture() {
-        let enabled = microphoneReady && engine.isRunning && controllerReady && !manuallyPaused && !quitting && fatalStatus == nil
+        let enabled = microphoneReady && engine.isRunning && controllerReady && !manuallyPaused && !quitting && !recoveringController && fatalStatus == nil
         setGate(enabled)
         captureQueue.async {
             self.accepting = enabled
             self.resetSegment()
         }
-        status(fatalStatus ?? (manuallyPaused ? "마이크 꺼짐" : (enabled ? "호출 대기" : (!microphoneReady ? "마이크 준비 중" : "처리 중"))))
+        status(fatalStatus ?? (recoveringController ? "컨트롤러 다시 연결 중" : (manuallyPaused ? "마이크 꺼짐" : (enabled ? "호출 대기" : (!microphoneReady ? "마이크 준비 중" : "처리 중")))))
     }
     private func resetSegment() {
         preRoll.removeAll(keepingCapacity: true)
@@ -208,9 +241,7 @@ final class Listener: NSObject, NSApplicationDelegate {
     }
 
     private func launchController() throws {
-        let base = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/JarvisMacOSS")
-        let raw = try Data(contentsOf: base.appendingPathComponent("config.json"))
+        let raw = try Data(contentsOf: controllerConfigRoot.appendingPathComponent("config.json"))
         guard let config = try JSONSerialization.jsonObject(with: raw) as? [String: Any],
               let python = config["python"] as? String, let controller = config["controller"] as? String,
               let dir = config["state_dir"] as? String, python.hasPrefix("/"), controller.hasPrefix("/"), dir.hasPrefix("/")
@@ -221,6 +252,12 @@ final class Listener: NSObject, NSApplicationDelegate {
         try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: audio.path)
+        controllerGeneration &+= 1
+        let generation = controllerGeneration
+        controllerLaunchTime = ProcessInfo.processInfo.systemUptime
+        controllerHasBeenReady = false
+        // Each process owns its output buffer; late EOF/data cannot affect its replacement.
+        var outputData = Data()
         let process = Process()
         let input = Pipe(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: python)
@@ -237,21 +274,25 @@ final class Listener: NSObject, NSApplicationDelegate {
             self.outputQueue.async {
                 if bytes.isEmpty {
                     handle.readabilityHandler = nil
-                    DispatchQueue.main.async { if !self.quitting { self.fail("컨트롤러 연결 종료") } }
+                    DispatchQueue.main.async { if self.controllerGeneration == generation { self.recoverController(reason: "output_eof") } }
                     return
                 }
-                self.outputData.append(bytes)
-                guard self.outputData.count < 65536 else {
-                    self.outputData.removeAll()
-                    DispatchQueue.main.async { self.fail("컨트롤러 응답 오류") }
+                outputData.append(bytes)
+                guard outputData.count < 65536 else {
+                    outputData.removeAll()
+                    DispatchQueue.main.async { if self.controllerGeneration == generation { self.recoverController(reason: "output_overflow") } }
                     return
                 }
-                while let newline = self.outputData.firstIndex(of: 10) {
-                    let line = Data(self.outputData[..<newline])
-                    self.outputData.removeSubrange(...newline)
+                while let newline = outputData.firstIndex(of: 10) {
+                    let line = Data(outputData[..<newline])
+                    outputData.removeSubrange(...newline)
                     guard let event = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
                     DispatchQueue.main.async {
-                        guard !self.quitting else { return }
+                        guard !self.quitting, !self.recoveringController, self.controllerGeneration == generation else { return }
+                        if let group = event["process_group"] as? Int32,
+                           group == process.processIdentifier, group > 1 {
+                            self.ownedControllerGroup = group
+                        }
                         if let listen = event["listen"] as? Bool {
                             let nextID = event["dictation_id"] as? String ?? ""
                             self.gateLock.lock()
@@ -261,6 +302,10 @@ final class Listener: NSObject, NSApplicationDelegate {
                             if listen && nextID.isEmpty { self.removePendingWav() }
                             let changed = self.controllerReady != listen || changedID
                             self.controllerReady = listen
+                            if listen {
+                                self.controllerHasBeenReady = true
+                                self.controllerRecovery.ready(at: ProcessInfo.processInfo.systemUptime)
+                            }
                             if changed { self.updateCapture() }
                         }
                         if let state = event["state"] as? String, !self.manuallyPaused, self.microphoneReady, self.fatalStatus == nil {
@@ -276,17 +321,100 @@ final class Listener: NSObject, NSApplicationDelegate {
             }
         }
         process.terminationHandler = { _ in
-            DispatchQueue.main.async { if !self.quitting { self.fail("컨트롤러 종료됨") } }
+            DispatchQueue.main.async {
+                if self.controllerGeneration == generation { self.recoverController(reason: "process_exit") }
+            }
         }
         try process.run()
+    }
+
+    private func recoverController(reason: String) {
+        guard !quitting, !recoveringController, fatalStatus == nil else { return }
+        recoveringController = true
+        controllerReady = false
+        controllerGeneration &+= 1 // invalidate callbacks and in-flight capture acknowledgements
+        let generation = controllerGeneration
+        setGate(false)
+        engine.stop()
+        updateCapture()
+        let delay = controllerRecovery.nextDelay(at: ProcessInfo.processInfo.systemUptime)
+        let old = child
+        let oldGroup = ownedControllerGroup
+        ownedControllerGroup = nil
+        let oldInput = inputPipe
+        let oldOutput = outputPipe
+        // Drain capture before closing its pipe; do not replay buffered input into a new process.
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.captureQueue.sync {
+                self.accepting = false
+                self.resetSegment()
+                try? oldInput?.fileHandleForWriting.close()
+            }
+            if let process = old { self.stopOwnedProcess(process) }
+            // The group ID was acknowledged by this exact child before failure.
+            // Only its inherited workers are reaped; unrelated processes are untouched.
+            if let group = oldGroup { kill(-group, SIGTERM); kill(-group, SIGKILL) }
+            oldOutput?.fileHandleForReading.readabilityHandler = nil
+            try? oldOutput?.fileHandleForReading.close()
+            self.removePendingWav()
+            DispatchQueue.main.async {
+                guard !self.quitting, self.controllerGeneration == generation else { return }
+                guard old?.isRunning != true else {
+                    self.recoveringController = false
+                    self.fail("이전 컨트롤러 종료 실패")
+                    return
+                }
+                self.child = nil
+                self.inputPipe = nil
+                self.outputPipe = nil
+                self.gateLock.lock()
+                self.dictationID = ""
+                self.gateLock.unlock()
+                let diagnostic: [String: Any] = [
+                    "reason": reason, "updated_wall": Date().timeIntervalSince1970,
+                    "pid": old?.processIdentifier ?? 0,
+                    "exit_status": old?.terminationStatus ?? -1,
+                    "exit_reason": old.map { $0.terminationReason == .uncaughtSignal ? "signal" : "exit" } ?? "launch",
+                    "attempt": self.controllerRecovery.attempts, "retry_scheduled": delay != nil]
+                if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]) {
+                    let path = self.stateDir.appendingPathComponent("last-controller-exit.json")
+                    try? data.write(to: path, options: .atomic)
+                    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+                }
+                guard let delay = delay else {
+                    self.recoveringController = false
+                    self.fail("컨트롤러 복구 실패 · 앱 재시작 필요")
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard !self.quitting, self.controllerGeneration == generation else { return }
+                    self.recoveringController = false
+                    do {
+                        try self.launchController()
+                        self.controllerRestartCount += 1
+                    } catch {
+                        // A failed spawn owns no live process. Retry through the same bounded policy.
+                        self.child = nil
+                        self.recoverController(reason: "launch_failed")
+                        return
+                    }
+                    self.microphoneRecovery = MicrophoneRecovery()
+                    if self.microphoneAuthorized && !self.manuallyPaused {
+                        do { try self.rebuildMicrophone() }
+                        catch { self.status("마이크 다시 연결 중") }
+                    }
+                    self.updateCapture()
+                }
+            }
+        }
     }
 
     private func recoverMicrophoneIfNeeded() {
         guard microphoneRecovery.shouldAttempt(running: engine.isRunning,
             authorized: microphoneAuthorized, paused: manuallyPaused,
-            quitting: quitting, failed: fatalStatus != nil) else {
+            quitting: quitting, failed: fatalStatus != nil || recoveringController) else {
             if !engine.isRunning && microphoneAuthorized && !manuallyPaused && !quitting
-                && fatalStatus == nil && microphoneRecovery.attempts >= 3 {
+                && fatalStatus == nil && !recoveringController && microphoneRecovery.attempts >= 3 {
                 fail("마이크 재연결 실패")
             }
             return
@@ -390,7 +518,11 @@ final class Listener: NSObject, NSApplicationDelegate {
         let captured = samples, started = speechStarted, lastVoice = speechEnded
         resetSegment()
         if captureID.isEmpty {
-            DispatchQueue.main.async { self.controllerReady = false; self.status("음성 인식 중") }
+            DispatchQueue.main.async {
+                if !self.recoveringController && !self.quitting {
+                    self.controllerReady = false; self.status("음성 인식 중")
+                }
+            }
         }
         var writtenWav: URL?
         do {
@@ -409,7 +541,7 @@ final class Listener: NSObject, NSApplicationDelegate {
             try pipe.fileHandleForWriting.write(contentsOf: bytes)
         } catch {
             if let wav = writtenWav { try? FileManager.default.removeItem(at: wav) }
-            DispatchQueue.main.async { if !self.quitting { self.fail("음성 전달 실패") } }
+            DispatchQueue.main.async { if !self.quitting { self.recoverController(reason: "audio_delivery") } }
         }
     }
 

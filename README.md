@@ -329,3 +329,7 @@ Cast의 수신기/미디어 상태 조회가 일시적으로 실패하면 읽기
 않습니다. 두 번 실패하면 오류를 기록하고 기존 연결 무효화 경로로 돌아갑니다.
 다른 사용자의 재생·중단 신호를 무시하지 않습니다. `last-wake.json`의 `error_code`에는
 허용된 오류 코드만 기록하며, 인식된 주변 대화나 원문 예외를 추가 저장하지 않습니다.
+
+## Controller fault recovery
+
+Unexpected controller exits now trigger bounded automatic recovery without replaying previous commands. See [recovery behavior and verification](docs/controller-recovery.md).
