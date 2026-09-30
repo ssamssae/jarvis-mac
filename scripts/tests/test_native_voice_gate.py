@@ -61,6 +61,18 @@ for _ in 0..<3 {
 require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "retry budget is bounded")
 require(!recovery.shouldAttempt(running: true, authorized: true, paused: false, quitting: false, failed: false), "running engine is untouched")
 require(recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "later independent device change recovers")
+var controller = ControllerRecovery()
+require(controller.nextDelay(at: 10) == 1, "first restart waits 1s")
+controller.ready(at: 11)
+require(controller.nextDelay(at: 12) == 2, "short startup cannot reset budget")
+controller.ready(at: 14)
+require(controller.nextDelay(at: 15) == 4, "third restart waits 4s")
+require(controller.nextDelay(at: 20) == nil, "crash loop stops after three restarts")
+var stable = ControllerRecovery()
+require(stable.nextDelay(at: 1) == 1, "first failure")
+stable.ready(at: 2)
+stable.ready(at: 200)
+require(stable.nextDelay(at: 303) == 1, "five stable minutes resets budget")
 print("native voice gate regressions passed")
 """
         with tempfile.TemporaryDirectory() as directory:
