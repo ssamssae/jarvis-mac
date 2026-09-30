@@ -37,6 +37,9 @@ extension Listener {
         kill(first, SIGKILL)
         wait(8) { self.controllerRestartCount == 1 && self.controllerReady }
         require(child!.processIdentifier != first, "replacement has a fresh PID")
+        require(ownedControllerGroup == child!.processIdentifier, "only an acknowledged group is owned")
+        wait(3) { kill(-first, 0) != 0 }
+
         require(manuallyPaused && !engine.isRunning, "explicit pause survives recovery")
         require(dictationID.isEmpty && !gateSnapshot().1, "no stale dictation or capture gate")
         // EOF and termination notifications together must consume one restart.
@@ -84,11 +87,12 @@ print("native controller recovery passed")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             worker = root/'controller.py'
-            worker.write_text('''import json, os, sys, time
+            worker.write_text('''import json, os, sys, time, subprocess
 from pathlib import Path
 if os.getpgrp() != os.getpid(): os.setsid()
 r=Path(sys.argv[2])
 (r/'received').touch(exist_ok=True)
+subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
 print(json.dumps({'state':'listening','listen':True,'process_group':os.getpgrp()}),flush=True)
 for line in sys.stdin:
  with (r/'received').open('a') as f: f.write(line)

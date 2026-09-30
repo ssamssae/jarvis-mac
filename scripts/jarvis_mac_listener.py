@@ -127,7 +127,7 @@ def checked_audio(event, audio_dir, max_age=20):
     return path
 
 
-def record_controller_error(root, exc, stage):
+def record_controller_error(root, exc, stage, signal_number=None):
     # Never persist exception messages, paths, provider output or transcripts.
     code = str(exc) if type(exc) is ValueError and str(exc) in {
         'invalid_audio_path', 'invalid_audio_file', 'invalid_capture_timing',
@@ -135,7 +135,8 @@ def record_controller_error(root, exc, stage):
     with contextlib.suppress(OSError):
         atomic_json(root/'last-controller-error.json', {
             'stage': stage, 'error_type': type(exc).__name__, 'code': code,
-            'pid': os.getpid(), 'finished_wall': time.time()})
+            'pid': os.getpid(), 'finished_wall': time.time(),
+            'signal': signal_number if signal_number in (signal.SIGTERM, signal.SIGINT) else None})
 
 
 def discard_audio(event, audio_dir):
@@ -223,8 +224,10 @@ def main():
         print(json.dumps(payload, ensure_ascii=False), flush=True)
     active_speech = None
     stopping = False
-    def stop(*_):
-        nonlocal stopping
+    stop_signal = None
+    def stop(signum, *_):
+        nonlocal stopping, stop_signal
+        stop_signal = signum
         stopping = True
         if active_speech: active_speech.abort()
         raise KeyboardInterrupt
@@ -577,7 +580,7 @@ def main():
                   dictation_id=dictation.request_id or '', selection_stage=dictation.selection_stage,
                   armed_seconds=30 if dictation.selecting else remaining, last_result=receipt['result'])
     except (KeyboardInterrupt, BrokenPipeError) as exc:
-        record_controller_error(root, exc, 'shutdown')
+        record_controller_error(root, exc, 'shutdown', stop_signal)
     except Exception as exc:
         record_controller_error(root, exc, 'controller')
         raise
