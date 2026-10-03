@@ -193,7 +193,7 @@ def main():
     os.environ['PATH'] = '/opt/homebrew/bin:/usr/local/bin:' + os.environ.get('PATH', '')
     request = json.loads(sys.stdin.read(100000))
     uuid.UUID(request['id'])
-    if request['engine'] not in {'codex','grok','cursor'} or request['node'] not in {'macbook14','mac','macmini'}:
+    if request['engine'] not in {'codex','grok','cursor'} or request['node'] not in {'mac','macmini'}:
         raise ValueError('unknown_target')
     if not isinstance(request['text'], str) or not request['text'].strip() or len(request['text']) > 64000:
         raise ValueError('invalid_text')

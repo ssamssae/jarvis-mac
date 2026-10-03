@@ -15,7 +15,7 @@ import wave
 # Vocabulary hints, never a grammar that forces noise into a valid destination.
 SELECTION_PROMPTS = {
     'engine': '음성 입력 연결 대상: 코덱스, 커서, 그록. Codex, Cursor, Grok. 취소.',
-    'node': '노드 이름: 헤르메스, 노트북, 아테나, 볼칸. Hermes. 취소.',
+    'node': '노드 이름: 아테나, 볼칸. 취소.',
 }
 
 

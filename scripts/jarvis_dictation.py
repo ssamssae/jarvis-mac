@@ -6,7 +6,7 @@ import uuid
 import time
 
 # Only observed standalone target aliases; do not fuzzy-match dictated content.
-NODES = {'헤르메스': 'macbook14', '노트북': 'macbook14', '헬멧스': 'macbook14', 'hermes': 'macbook14', '아테나': 'mac', '아테느': 'mac',
+NODES = {'아테나': 'mac', '아테느': 'mac',
          '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini'}
 ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', 'grok': 'grok', '커서': 'cursor', 'cursor': 'cursor'}
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')
@@ -15,7 +15,7 @@ END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
 
 class Dictation:
     def __init__(self, capture_node=None):
-        self.capture_node = capture_node if capture_node in {"mac", "macbook14", "macmini"} else None
+        self.capture_node = capture_node if capture_node in {"mac", "macmini"} else None
         self.start_source = "microphone"
         self.target = None
         self.parts = []
@@ -57,7 +57,7 @@ class Dictation:
         if self.selection_stage == 'node':
             node = NODES.get(key)
             if node is None:
-                return '헤르메스 또는 노트북, 아테나, 볼칸 중 어떤 노드인가요?'
+                return '아테나, 볼칸 중 어떤 노드인가요?'
             engine = self.selection_engine
             source = self.start_source
             self.cancel()

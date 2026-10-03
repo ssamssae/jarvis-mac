@@ -55,6 +55,16 @@ class ConfirmationTests(unittest.TestCase):
             self.assertEqual(c.accept(text, 100, 100), 'cancel')
             self.assertIsNone(c.accept('예', 101, 101))
 
+    def test_remaining_three_targets_execute_once(self):
+        cfg = {'steps': [{'name': '아테나', 'kind': 'brightness', 'argv': ['brightness']},
+                         {'name': '라이덴', 'kind': 'shutdown', 'argv': ['shutdown', 'raiden']},
+                         {'name': '테미스', 'kind': 'shutdown', 'argv': ['shutdown', 'themis']}]}
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'verified': True, 'level': 0}) if argv[0] == 'brightness' else 'JARVIS_SHUTDOWN_ACCEPTED', '')
+        runner = Mock(side_effect=run)
+        self.assertEqual(end.execute(cfg, runner)['status'], 'ok')
+        self.assertEqual(runner.call_count, 3)
+
     def test_execution_receipts_and_partial_failure(self):
         cfg = {'steps': [{'name': 'Mac', 'kind': 'brightness', 'argv': ['brightness', '--level', '0']}] * 2 + [{'name': 'PC', 'kind': 'shutdown', 'argv': ['ssh', 'pc', 'shutdown-helper']}] * 2}
         def runner(argv, **kw):

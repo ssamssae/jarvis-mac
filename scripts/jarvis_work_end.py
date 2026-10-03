@@ -51,7 +51,7 @@ CANCELLED = '작전 종료 취소. 대기하겠습니다.'
 
 def execute(config, runner=subprocess.run):
     steps = config.get('steps') if isinstance(config, dict) else None
-    if not isinstance(steps, list) or len(steps) != 4:
+    if not isinstance(steps, list) or not 1 <= len(steps) <= 4:
         return {'status': 'unconfigured', 'answer': '일 끝 루틴이 아직 설정되지 않았어요.', 'steps': []}
 
     def step(item):

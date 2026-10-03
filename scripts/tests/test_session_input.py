@@ -34,7 +34,7 @@ class ProvenanceDeliveryTest(unittest.TestCase):
             session = Path(directory)/'session.jsonl'
             session.write_text('')
             marker = Path(directory)/'receipt.json'
-            req = dict(id='123', node='macbook14', engine='codex', origin='microphone', text='승인')
+            req = dict(id='123', node='mac', engine='codex', origin='microphone', text='승인')
             calls = []
             def record(request, path, **kwargs):
                 calls.append('metadata')
@@ -68,7 +68,7 @@ class FreshSessionInputTest(unittest.TestCase):
         import jarvis_session_input as adapter
         with tempfile.TemporaryDirectory() as directory:
             session = Path(directory)/'new.jsonl'
-            request = dict(id='123', node='macbook14', engine='codex', origin='microphone', text='first input')
+            request = dict(id='123', node='mac', engine='codex', origin='microphone', text='first input')
             pasted = []
             recorded = []
             bound = []
@@ -91,3 +91,14 @@ class FreshSessionInputTest(unittest.TestCase):
             self.assertEqual(pasted, ['first input'])
             self.assertEqual(recorded, [(None, 23, [])])
             self.assertEqual(bound, [session])
+
+class RetiredTargetTest(unittest.TestCase):
+    def test_retired_node_rejected_before_transport(self):
+        import io
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        request = {'id': '38d3339e-5795-4e52-914d-fd56569e9873', 'node': 'macbook14', 'engine': 'codex', 'text': 'unchanged'}
+        with patch.object(sys, 'argv', ['receiver', '--local']), patch.object(sys, 'stdin', io.StringIO(json.dumps(request))), patch.object(adapter, 'local_submit') as submit:
+            with self.assertRaisesRegex(ValueError, 'unknown_target'):
+                adapter.main()
+            submit.assert_not_called()
