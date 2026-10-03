@@ -12,13 +12,13 @@ import jarvis_mac_listener as listener
 
 class ListenerDictationTest(unittest.TestCase):
     def test_matter_only_starts_then_local_microphone_selects_and_dictates(self):
-        self.check_flow([None, None, '코덱스', '노트북', None, '승인', '', '엔터'],
+        self.check_flow([None, None, '코덱스', '아테나', None, '승인', '', '엔터'],
                         ['armed', 'armed', 'armed', 'dictating', 'dictating', 'dictating', 'dictating'], guided=True)
     def test_named_target_multisegment_literal_approval_and_single_enter(self):
-        self.check_named_target('자비스 헤르메스 코덱스')
+        self.check_named_target('자비스 아테나 코덱스')
 
     def test_english_target_enters_dictation_without_conversation(self):
-        self.check_named_target('자비스 Hermes Codex')
+        self.check_named_target('자비스 아테나 Codex')
 
     def check_named_target(self, invocation):
         self.check_flow([invocation, '승인', '', '엔터'],
@@ -26,12 +26,12 @@ class ListenerDictationTest(unittest.TestCase):
 
     def test_guided_notebook_flow_and_unknown_replies_stay_local(self):
         self.check_flow(['자비스', '음성 입력', '알 수 없는 엔진', '코덱스',
-                         '페르멘스', '노트북', '승인', '', '엔터'],
+                         '페르멘스', '아테나', '승인', '', '엔터'],
                         ['armed', 'armed', 'armed', 'armed', 'armed',
                          'dictating', 'dictating', 'dictating'], guided=True)
 
     def test_prompt_started_timeout_preserves_selection(self):
-        self.check_flow(['자비스 음성 입력', '코덱스', '노트북', '승인', '', '엔터'],
+        self.check_flow(['자비스 음성 입력', '코덱스', '아테나', '승인', '', '엔터'],
                         ['armed', 'armed', 'dictating', 'dictating', 'dictating'],
                         guided=True, prompt_timeout=True)
 
@@ -40,7 +40,7 @@ class ListenerDictationTest(unittest.TestCase):
                         ['armed', 'armed'], expected_delivery=False)
 
     def test_native_worker_hints_follow_selection_and_stop_before_body(self):
-        self.check_flow(['자비스 음성 입력', '코덱스', '노트북', '승인', '', '엔터'],
+        self.check_flow(['자비스 음성 입력', '코덱스', '아테나', '승인', '', '엔터'],
                         ['armed', 'armed', 'dictating', 'dictating', 'dictating'],
                         guided=True, custom_worker=False)
 
@@ -114,7 +114,7 @@ class ListenerDictationTest(unittest.TestCase):
                 return
             self.assertEqual(len(requests), 1)
             self.assertEqual(requests[0]['text'], '승인')
-            self.assertEqual(requests[0]['node'], 'macbook14')
+            self.assertEqual(requests[0]['node'], 'mac')
             self.assertEqual(requests[0]['engine'], 'codex')
             self.assertEqual(requests[0]['capture_node'], 'mac')
             self.assertEqual(requests[0]['start_source'], 'google-home-matter' if transcripts[0] is None else 'microphone')

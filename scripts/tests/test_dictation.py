@@ -9,7 +9,7 @@ from jarvis_dictation import Dictation, deliver
 class DictationTest(unittest.TestCase):
     def test_guided_selection_all_targets(self):
         for engine, expected_engine in [('코덱스', 'codex'), ('커서', 'cursor'), ('그록', 'grok')]:
-            for node, expected_node in [('헤르메스', 'macbook14'), ('노트북', 'macbook14'), ('아테나', 'mac'), ('볼칸', 'macmini')]:
+            for node, expected_node in [('아테나', 'mac'), ('볼칸', 'macmini')]:
                 with self.subTest(engine=engine, node=node):
                     d = Dictation()
                     self.assertEqual(d.select('음성 입력'), '어디로 연결할까요?')
@@ -24,7 +24,7 @@ class DictationTest(unittest.TestCase):
         for trigger in ['보이스 스타토', '보이스스타토!', '보이스 스타트', '음성 입력']:
             d = Dictation()
             self.assertEqual(d.select(trigger), '어디로 연결할까요?')
-            d.select('코덱스'); d.select('노트북')
+            d.select('코덱스'); d.select('아테나')
             self.assertEqual(d.accept('보이스 스타토 음성임녀 엔터')[1]['text'], '보이스 스타토 음성임녀')
         self.assertIsNone(Dictation().select('보이스 스타토가 뭐야'))
 
@@ -35,7 +35,7 @@ class DictationTest(unittest.TestCase):
         self.assertIn('코덱스', d.select('선풍기 꺼줘'))
         self.assertEqual(d.selection_stage, 'engine')
         d.select('Cursor')
-        self.assertIn('노트북', d.select('페르멘스'))
+        self.assertIn('아테나', d.select('페르멘스'))
         self.assertIsNone(d.target)
         self.assertIn('취소', d.select('취소', cancelled=True))
         self.assertFalse(d.selecting)
@@ -44,7 +44,7 @@ class DictationTest(unittest.TestCase):
     def test_selection_expiry_and_restart_do_not_reuse_engine(self):
         d = Dictation(); d.select('음성 입력'); d.select('코덱스')
         d.selection_until = 0
-        self.assertIn('시간', d.select('노트북'))
+        self.assertIn('시간', d.select('아테나'))
         self.assertIsNone(d.target)
         self.assertFalse(d.selecting)
         d.select('음성 입력'); d.select('커서'); d.select('음성 입력')
@@ -52,7 +52,7 @@ class DictationTest(unittest.TestCase):
         self.assertIsNone(d.selection_engine)
 
     def test_all_targets_and_alias(self):
-        for node in ('헤르메스','아테나','볼칸','볼탄'):
+        for node in ('아테나','볼칸','볼탄'):
             for engine in ('코덱스','그록','커서'):
                 d = Dictation()
                 self.assertTrue(d.start(node + ' ' + engine))
@@ -65,7 +65,7 @@ class DictationTest(unittest.TestCase):
                 self.assertIsNone(d.target)
 
     def test_enter_in_sentence_is_content(self):
-        d = Dictation(); d.start('헤르메스 코덱스')
+        d = Dictation(); d.start('아테나 코덱스')
         self.assertEqual(d.accept('엔터 키의 동작을 설명해줘')[0], 'collecting')
         self.assertEqual(d.accept('엔터')[1]['text'], '엔터 키의 동작을 설명해줘')
 
@@ -74,24 +74,12 @@ class DictationTest(unittest.TestCase):
         self.assertEqual(d.accept('엔터'), ('empty', None))
         self.assertIsNotNone(d.target)
         self.assertEqual(d.accept('승인 엔터')[1]['text'], '승인')
-        d.start('헤르메스 코덱스')
+        d.start('아테나 코덱스')
         self.assertEqual(d.accept('취소 엔터')[1]['text'], '취소')
 
     def test_start_is_exact(self):
         for text in ('아테나', '헤르메스 코덱스가 뭐야', '다른 헤르메스 코덱스', '커서'):
             self.assertFalse(Dictation().start(text))
-
-    def test_observed_hermes_alias_routes_without_rewriting_content(self):
-        for engine, expected in (('코덱스', 'codex'), ('그록', 'grok'), ('커서', 'cursor')):
-            for text in ('헬멧스 ' + engine, '헬멧스' + engine + '.'):
-                with self.subTest(text=text):
-                    d = Dictation()
-                    self.assertTrue(d.start(text))
-                    self.assertEqual(d.target, ('macbook14', expected))
-                    action, request = d.accept('헬멧스라는 단어를 설명해줘 엔터')
-                    self.assertEqual(action, 'submit')
-                    self.assertEqual((request['node'], request['engine']), ('macbook14', expected))
-                    self.assertEqual(request['text'], '헬멧스라는 단어를 설명해줘')
 
     def test_hermes_alias_does_not_capture_questions_or_near_matches(self):
         for text in ('헬멧스', '헬멧스 코덱스가 뭐야', '다른 헬멧스 코덱스',
@@ -101,17 +89,13 @@ class DictationTest(unittest.TestCase):
                 self.assertFalse(d.start(text))
                 self.assertIsNone(d.target)
 
-    def test_english_and_mixed_hermes_invocations(self):
-        for text in ('Hermes Codex', 'hermes codex', 'HERMES CODEX',
-                     'Hermes 코덱스', '헤르메스 Codex', '헬멧스 CODEX',
-                     ' Hermes Codex! ', 'HermesCodex'):
-            with self.subTest(text=text):
-                d = Dictation()
-                self.assertTrue(d.start(text))
-                self.assertEqual(d.target, ('macbook14', 'codex'))
-                action, request = d.accept('Keep Hermes Codex CASE 엔터')
-                self.assertEqual(action, 'submit')
-                self.assertEqual(request['text'], 'Keep Hermes Codex CASE')
+    def test_retired_targets_are_rejected(self):
+        for alias in ('헤르메스', '노트북', '헬멧스', 'Hermes', 'HERMES'):
+            d = Dictation()
+            self.assertFalse(d.start(alias + ' Codex'))
+            d.select('음성 입력'); d.select('코덱스')
+            self.assertIn('아테나', d.select(alias))
+            self.assertIsNone(d.target)
 
     def test_english_invocation_boundary(self):
         for text in ('What is Hermes Codex', 'Hermes Codex가 뭐야',
@@ -144,7 +128,7 @@ class ProvenanceResetTest(unittest.TestCase):
         d = Dictation(capture_node='mac')
         d.select('음성 입력', start_source='google-home-matter')
         d.select('코덱스')
-        d.select('노트북')
+        d.select('아테나')
         _, request = d.accept('원문 엔터')
         self.assertEqual(request['start_source'], 'google-home-matter')
         self.assertEqual(request['capture_node'], 'mac')

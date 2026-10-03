@@ -1,3 +1,19 @@
+# Active voice session targets
+
+Say `자비스 아테나 코덱스`, or choose 아테나 / 볼칸 and 코덱스 / 그록 / 커서 through `보이스 스타토`.
+Only mac and macmini are active destinations. Retired Hermes aliases are rejected by selection and the receiving script.
+Dictated content is preserved, and an explicit 엔터 submits once.
+
+## Retirement verification (T-261003-013)
+
+- Guided selection: choose an engine, then 아테나 or 볼칸; unknown or retired names keep the selection prompt open.
+- Direct invocation: retired node names never start dictation.
+- Google Home start reads the same local work_mode configuration as voice start.
+- Work end retains its one-use confirmation and supports the remaining three configured targets.
+- Tests use mocked commands; they do not wake or shut down devices.
+
+## Historical behavior before retirement
+
 # Named session dictation
 
 Say `자비스 헤르메스 코덱스` (or 아테나 / 볼칸 / 볼탄 and 그록 / 커서).
