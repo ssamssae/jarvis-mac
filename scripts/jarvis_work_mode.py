@@ -6,7 +6,12 @@ import subprocess
 
 
 def matches(text):
-    return re.sub(r'[\s,.!?，。！？]','',text) in {'시고토스타토', 'しごとスタート', 'しごとすたーと', '仕事スタート'}
+    return re.sub(r'[\s,.!?，。！？]','',text) in {
+        '시고토스타토', '시고터스타토', '시고토하지메',
+        'しごとスタート', 'しごとすたーと', '仕事スタート', '仕事をスタート',
+        'しごとはじめ', 'しごとをはじめ', '仕事始め', '仕事はじめ',
+        '仕事を始め', '仕事をはじめ',
+    }
 
 
 def execute(config, runner=subprocess.run):

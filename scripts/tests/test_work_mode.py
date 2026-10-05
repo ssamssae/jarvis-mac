@@ -12,6 +12,17 @@ class WorkTests(unittest.TestCase):
     def test_only_exact_commands(self):
         for text in ['시고토 스타토', '시고토스타토!', 'しごとスタート', '仕事 スタート', 'しごとすたーと']:self.assertTrue(matches(text))
         for text in ['일하자', '일 시작하자', '작업 시작하자', '시고토 스타토라고 말해', '시고토 스타토 하지마', '시고토 스타토 그리고 물줘']:self.assertFalse(matches(text))
+    def test_reported_japanese_start_variants_and_negative_context(self):
+        for text in ['仕事を始め', '仕事始め', '仕事はじめ', 'しごとはじめ',
+                     'しごとをはじめ', '仕事をはじめ', '仕事をスタート',
+                     '시고토 하지메', '시고터 스타토']:
+            with self.subTest(text=text):
+                self.assertTrue(matches(text))
+        for text in ['仕事を始めないで', '仕事を始めるな', '仕事始めについて教えて',
+                     '仕事を始めと言って', '시고토 하지메 하지마',
+                     '시고터 스타토 그리고 물줘', '仕事を始め、電源を切って']:
+            with self.subTest(text=text):
+                self.assertFalse(matches(text))
     def test_fixed_argv_and_verified_brightness(self):
         run=Mock(return_value=subprocess.CompletedProcess([],0,json.dumps({'verified':True,'level':6}),''))
         result=execute({'steps':[{'name':'맥','kind':'brightness','argv':['python3','helper.py','--level','6']}]},run)

@@ -128,6 +128,15 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.run_dialog(['자비스 일본어', '仕事終わり'], window=0,
                                         expected_languages=[None, None]), 0)
 
+    def test_japanese_start_variants_route_once_without_shutdown(self):
+        for text in ['仕事を始め', '仕事始め', 'しごとはじめ', '仕事をスタート', '仕事スタート']:
+            with self.subTest(text=text):
+                self.assertEqual(self.run_dialog(['자비스 일본어', text, text],
+                                                expected_languages=[None, 'ja', None], start_expected=1), 0)
+        for text in ['仕事を始めないで', '仕事始めについて教えて']:
+            self.assertEqual(self.run_dialog(['자비스 일본어', text],
+                                            expected_languages=[None, 'ja']), 0)
+
     def test_japanese_trigger_is_wake_qualified_and_one_utterance(self):
         self.assertEqual(self.run_dialog(['일본어', '仕事終わり'], expected_languages=[None, None]), 0)
         self.assertEqual(self.run_dialog(['자비스', '일본어', '仕事終わり', '아니요'],
