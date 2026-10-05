@@ -281,6 +281,14 @@ Mac displays and checks the resulting value (0.375); unsupported system APIs fai
 explicitly. The installer preserves `work_mode`; credentials and device identities
 remain in local configuration. User display auto-brightness policy is unchanged.
 
+Japanese mode: say “자비스 일본어”, wait for the cue, then say “しごとスタート”
+or “しごとはじめ”. Exact STT variants including “仕事を始め”, “仕事始め”,
+and “仕事をスタート” select the same start routine. Korean phonetic “시고터 스타토”
+and “시고토 하지메” also match. Negations, quotations, and compound commands do not.
+T-261005-010 validation replays the observed `仕事を始め` transcript through the
+listener, verifies one start and zero shutdown calls, and checks negative inputs.
+This transcript replay does not establish a new live microphone recognition result.
+
 ### Confirmed work-end routine
 
 “시고토 오와리” after the wake phrase asks whether to lower both Mac displays to level 0 and normally shut down
