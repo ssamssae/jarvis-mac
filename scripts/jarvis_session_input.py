@@ -230,7 +230,10 @@ def local_submit(root, request, probe=False):
         return 'ready'
     text = text.replace('\n', ' ')
     mark = transcript_mark(bridge.tui_history_path())
-    payload = (text + '\n').encode()
+    # The Grok bridge mirrors FIFO input to Telegram as 「음성 입력: …」 only behind its voice prefix
+    # (T-260827-024); the receipt still looks for the plain dictated text.
+    prefix = getattr(bridge, 'VOICE_PROMPT_PREFIX', '[VOICE] ')
+    payload = (prefix + text + '\n').encode()
     if bridge.is_awaiting_human() and request.get('origin') == 'microphone':
         bridge.clear_awaiting_human()
     fd = os.open(candidates[0], os.O_WRONLY | os.O_NONBLOCK)
