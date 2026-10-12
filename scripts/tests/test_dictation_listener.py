@@ -18,6 +18,10 @@ class ListenerDictationTest(unittest.TestCase):
         self.check_flow([None, '승인', '', '엔터'], ['dictating', 'dictating', 'dictating'],
                         external_target='아테나 클로드', expected_engine='claude')
 
+    def test_preset_target_drops_stt_artifact_before_body(self):
+        self.check_flow([None, '-끝-', '승인', '', '엔터'], ['dictating', 'dictating', 'dictating', 'dictating'],
+                        external_target='아테나 클로드', expected_engine='claude')
+
     def test_named_target_multisegment_literal_approval_and_single_enter(self):
         self.check_named_target('자비스 아테나 코덱스')
 

@@ -132,6 +132,32 @@ class DictationTest(unittest.TestCase):
             self.assertEqual(d.accept('긴 이야기의 다음 문장입니다')[0], 'collecting')
         self.assertEqual(d.accept('엔터')[1]['text'].count('다음'), 100)
 
+    def test_stt_subtitle_artifacts_are_not_dictated(self):
+        # whisper-small turns non-speech chunks into subtitle boilerplate (observed 2026-10-13).
+        for artifact in ('-끝.', '-끝-', '(끝)', '- 끝 -', '-감사합니다. -감사합니다. -감사합니다.',
+                         'MBC 뉴스 이준범입니다.', 'MBC 뉴스 김성현입니다.', '시청해 주셔서 감사합니다.'):
+            with self.subTest(artifact=artifact):
+                d = Dictation(); d.start('아테나 클로드')
+                self.assertEqual(d.accept(artifact), ('collecting', None))
+                self.assertEqual(d.parts, [])
+                self.assertEqual(d.accept('안녕하세요 클로드 아테나 엔터')[1]['text'], '안녕하세요 클로드 아테나')
+                d.start('아테나 클로드')
+                self.assertEqual(d.accept(artifact + ' 엔터'), ('empty', None))
+
+    def test_speech_resembling_artifacts_is_kept(self):
+        for text in ('끝', '끝.', '끝내자', '오늘 일은 끝', '끝이 왜 들어가지', '감사합니다.',
+                     '감사합니다 오늘 고마웠어', 'MBC 뉴스 봤어?', '-뭐야?'):
+            with self.subTest(text=text):
+                d = Dictation(); d.start('아테나 클로드')
+                self.assertEqual(d.accept(text)[0], 'collecting')
+                self.assertEqual(d.accept('엔터')[1]['text'], text)
+
+    def test_observed_enter_mishearing_submits(self):
+        d = Dictation(); d.start('아테나 클로드')
+        self.assertEqual(d.accept('안녕하세요 클로드 아테나야 엠토')[1]['text'], '안녕하세요 클로드 아테나야')
+        d.start('아테나 클로드')
+        self.assertEqual(d.accept('엠토 발음을 알려줘')[0], 'collecting')
+
     def test_no_retry_on_ambiguous_transport(self):
         runner = Mock(side_effect=TimeoutError())
         self.assertEqual(deliver({'argv':['receiver']}, {'id':'test'}, runner)['status'], 'unknown')
