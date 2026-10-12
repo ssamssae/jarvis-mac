@@ -7,8 +7,14 @@ import time
 
 # Only observed standalone target aliases; do not fuzzy-match dictated content.
 NODES = {'아테나': 'mac', '아테느': 'mac',
-         '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini'}
-ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', 'grok': 'grok', '커서': 'cursor', 'cursor': 'cursor'}
+         '볼칸': 'macmini', '볼탄': 'macmini', '불칸': 'macmini',
+         '제우스': 'zeus', '아폴론': 'apollo', '아폴로': 'apollo'}
+# '클라우드' is the common Korean STT spelling of Claude; it is only read as an engine
+# choice at the engine selection stage or in a standalone "node engine" invocation.
+ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', 'grok': 'grok', '커서': 'cursor', 'cursor': 'cursor',
+           '클로드': 'claude', 'claude': 'claude', '클라우드': 'claude'}
+ENGINE_PROMPT = '코덱스, 커서, 그록, 클로드 중 어디로 연결할까요?'
+NODE_PROMPT = '아테나, 볼칸, 제우스, 아폴론 중 어떤 노드인가요?'
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')
 END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
 
@@ -50,14 +56,14 @@ class Dictation:
         if self.selection_stage == 'engine':
             engine = ENGINES.get(key)
             if engine is None:
-                return '코덱스, 커서, 그록 중 어디로 연결할까요?'
+                return ENGINE_PROMPT
             self.selection_engine = engine
             self.selection_stage = 'node'
             return '어떤 노드인가요?'
         if self.selection_stage == 'node':
             node = NODES.get(key)
             if node is None:
-                return '아테나, 볼칸 중 어떤 노드인가요?'
+                return NODE_PROMPT
             engine = self.selection_engine
             source = self.start_source
             self.cancel()
@@ -67,11 +73,13 @@ class Dictation:
             return '말씀하세요.'
         return None
 
-    def start(self, text):
+    def start(self, text, *, start_source="microphone"):
         match = START.fullmatch(text.lower())
         if not match:
             return False
         self.cancel()
+        # A button or Nest trigger can name the target directly and skip the questions.
+        self.start_source = 'google-home-matter' if start_source == 'google-home-matter' else 'microphone'
         self.target = (NODES[match[1]], ENGINES[match[2]])
         self.parts = []
         self.request_id = str(uuid.uuid4())

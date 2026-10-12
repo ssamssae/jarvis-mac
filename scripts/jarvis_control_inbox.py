@@ -7,6 +7,18 @@ import select
 import socket
 import time
 
+from jarvis_dictation import START
+
+
+def dictation_target(request):
+    """A preset "node engine" phrase for dictation_start, or None when absent/invalid."""
+    target = request.get('target')
+    if target is None:
+        return None
+    if not isinstance(target, str) or not 0 < len(target) <= 40 or not START.fullmatch(target.lower()):
+        raise ValueError('invalid_target')
+    return target
+
 
 # Fixed button intents share the listener's normal dispatch and speech path.
 BUTLER_PHRASES = {'scene_game': '게임할거야', 'scene_sleep': '잘거야',
@@ -67,9 +79,14 @@ def events(stream, root):
                         created = request.get('created_at')
                         intent = request.get('intent')
                         source = request.get('source', 'google-home-matter')
+                        try:
+                            target = dictation_target(request) if intent == 'dictation_start' else None
+                            target_ok = True
+                        except ValueError:
+                            target, target_ok = None, False
                         allowed = (isinstance(intent, str) and intent in BUTLER_PHRASES if source == 'butler-remote'
                                    else source == 'google-home-matter' and intent in ('work_end', 'dictation_start'))
-                        accepted = (allowed
+                        accepted = (allowed and target_ok
                                     and isinstance(created, (float, int))
                                     and 0 <= time.time() - created < 3
                                     and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
@@ -79,9 +96,12 @@ def events(stream, root):
                 if accepted:
                     last_request[intent] = time.monotonic()
                     now = time.time()
-                    yield {'source': source, 'intent': intent,
-                           'speech_started_wall': now, 'speech_ended_wall': now,
-                           'capture_ended_wall': now}
+                    event = {'source': source, 'intent': intent,
+                             'speech_started_wall': now, 'speech_ended_wall': now,
+                             'capture_ended_wall': now}
+                    if target:
+                        event['target'] = target
+                    yield event
     finally:
         server.close()
         path.unlink(missing_ok=True)

@@ -1,12 +1,13 @@
 # Active voice session targets
 
-Say `자비스 아테나 코덱스`, or choose 아테나 / 볼칸 and 코덱스 / 그록 / 커서 through `보이스 스타토`.
+Say `자비스 아테나 코덱스`, or choose 아테나 / 볼칸 / 제우스 / 아폴론 and 코덱스 / 그록 / 커서 / 클로드 through `보이스 스타토`.
 Only mac and macmini are active destinations. Retired Hermes aliases are rejected by selection and the receiving script.
 Dictated content is preserved, and an explicit 엔터 submits once.
 
 ## Retirement verification (T-261003-013)
 
-- Guided selection: choose an engine, then 아테나 or 볼칸; unknown or retired names keep the selection prompt open.
+- Guided selection: choose an engine, then 아테나 / 볼칸 / 제우스 / 아폴론; unknown or retired names keep the selection prompt open.
+- Preset target: a local trigger may name the target up front (`request_dictation.py --target "아테나 클로드"`), so Jarvis says `말씀하세요.` without the two questions. Only a standalone `node engine` phrase is accepted; anything else is rejected before the listener sees it.
 - Direct invocation: retired node names never start dictation.
 - Google Home start reads the same local work_mode configuration as voice start.
 - Work end retains its one-use confirmation and supports the remaining three configured targets.
@@ -16,7 +17,7 @@ Dictated content is preserved, and an explicit 엔터 submits once.
 
 # Named session dictation
 
-Say `자비스 헤르메스 코덱스` (or 아테나 / 볼칸 / 볼탄 and 그록 / 커서).
+Say `자비스 아테나 코덱스` (nodes 아테나 / 볼칸 / 제우스 / 아폴론, engines 코덱스 / 그록 / 커서 / 클로드).
 Wait for `말씀하세요`, then dictate. Pauses do not submit. End with the spoken
 word `엔터` to send the accumulated text once. `승인 엔터` sends exactly `승인`.
 No model interprets or rewrites the dictated content. Approval words are ordinary
@@ -27,9 +28,11 @@ user text, not a permission decision made by this router.
 With microphone permission, the listener running, and `dictation.argv` configured:
 
 1. Say `자비스`, wait for its cue, then say `보이스 스타토` (or `자비스 보이스 스타토`).
-2. Jarvis asks `어디로 연결할까요?`. Say `코덱스`, `커서`, or `그록`.
+2. Jarvis asks `어디로 연결할까요?`. Say `코덱스`, `커서`, `그록`, or `클로드` (`클라우드` is accepted as the usual STT spelling).
 3. Jarvis asks `어떤 노드인가요?`. Say `헤르메스` or `노트북` for macbook14,
-   `아테나` for mac, or `볼칸` for macmini.
+   `아테나` for mac, `볼칸` for macmini, `제우스` for zeus, or `아폴론` for apollo.
+   Delivery to a node needs that engine's session running there; the transport
+   answers `unavailable`/`busy` instead of guessing.
 4. Wait for `말씀하세요.`, dictate the body, and say `엔터` to send it once.
 
 `노트북` is also supported in the existing direct invocation `자비스 노트북 커서`.

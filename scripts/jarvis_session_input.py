@@ -20,7 +20,7 @@ import uuid
 
 def load_bridge(root, engine):
     name = {'codex':'codex-repl-telegram-bridge.py', 'cursor':'cursor-telegram-bridge.py',
-            'grok':'grok-telegram-bridge.py'}[engine]
+            'grok':'grok-telegram-bridge.py', 'claude':'claude-telegram-bridge.py'}[engine]
     # Imports expose existing transports only. No Telegram polling/sending is started.
     os.environ['CUB_DRY_RUN'] = '1'
     os.environ['GRB_DRY_RUN'] = '1'
@@ -94,6 +94,40 @@ def codex_composer_empty(screen):
     return True
 
 
+def claude_transcript_path(bridge, config, transport):
+    """The bridge's own session binding; None when it cannot name one transcript."""
+    try:
+        return Path(bridge.SessionBinder(config, transport).resolve().transcript_path)
+    except Exception:
+        return None
+
+
+def transcript_tail_mark(path):
+    try:
+        return (Path(path), Path(path).stat().st_size) if path else (None, 0)
+    except OSError:
+        return (None, 0)
+
+
+def user_text_seen_tail(mark, text):
+    """Like user_text_seen, but only reads bytes appended after the mark (Claude JSONL grows large)."""
+    path, offset = mark
+    if path is None:
+        return 'unverified'
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            with path.open('rb') as handle:
+                handle.seek(offset)
+                tail = handle.read().decode('utf-8', 'replace')
+        except OSError:
+            tail = ''
+        if user_text_count(tail, text):
+            return 'submitted'
+        time.sleep(.2)
+    return 'unverified'
+
+
 def local_submit(root, request, probe=False):
     engine = request['engine']
     bridge = load_bridge(root, engine)
@@ -141,6 +175,21 @@ def local_submit(root, request, probe=False):
                     pass  # Display metadata must not change delivery or cause a resend.
             return candidate
         return user_text_seen(mark, text, source)
+    if engine == 'claude':
+        # Same composer guard as the Codex path: never type over a prompt or a draft.
+        config = bridge.Config.from_env()
+        transport = bridge.TmuxClaudeTransport(config)
+        with transport.composer_lock():
+            screen = transport.capture_pane()
+            if bridge.parse_pane_choice(screen) or bridge.parse_ask_question(screen):
+                return 'busy'
+            if bridge.composer_residual_text(screen):
+                return 'composer_occupied'
+            if probe:
+                return 'ready'
+            mark = transcript_tail_mark(claude_transcript_path(bridge, config, transport))
+            transport._paste_prompt_unlocked(text)
+        return user_text_seen_tail(mark, text)
     if engine == 'cursor':
         with bridge.composer_lock():
             screen = bridge._tui_capture_pane()
@@ -193,7 +242,7 @@ def main():
     os.environ['PATH'] = '/opt/homebrew/bin:/usr/local/bin:' + os.environ.get('PATH', '')
     request = json.loads(sys.stdin.read(100000))
     uuid.UUID(request['id'])
-    if request['engine'] not in {'codex','grok','cursor'} or request['node'] not in {'mac','macmini'}:
+    if request['engine'] not in {'codex','grok','cursor','claude'} or request['node'] not in {'mac','macmini','zeus','apollo'}:
         raise ValueError('unknown_target')
     if not isinstance(request['text'], str) or not request['text'].strip() or len(request['text']) > 64000:
         raise ValueError('invalid_text')
