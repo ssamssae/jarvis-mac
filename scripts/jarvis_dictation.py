@@ -16,7 +16,15 @@ ENGINES = {'코덱스': 'codex', 'codex': 'codex', '그록': 'grok', 'grok': 'gr
 ENGINE_PROMPT = '코덱스, 커서, 그록, 클로드 중 어디로 연결할까요?'
 NODE_PROMPT = '아테나, 볼칸, 제우스, 아폴론 중 어떤 노드인가요?'
 START = re.compile(r'^\s*(' + '|'.join(NODES) + r')\s*(' + '|'.join(ENGINES) + r')[\s,.!?。！？]*$')
-END = re.compile(r'(?:^|\s)(?:엔터|enter)[\s,.!?。！？]*$', re.I)
+# '엠토' is an observed STT spelling of a spoken 엔터 (2026-10-13).
+END = re.compile(r'(?:^|\s)(?:엔터|엠토|enter)[\s,.!?。！？]*$', re.I)
+# whisper-small turns non-speech chunks into subtitle boilerplate, sometimes repeated within
+# one chunk (observed 2026-10-13: '-끝.', '-끝-', '(끝)', '-감사합니다.' x3, 'MBC 뉴스 이준범입니다.').
+# Drop only whole chunks; spoken '끝' and '감사합니다' come back without the dash and stay content.
+# Each form starts with its own dash, bracket or word, so the repetition cannot backtrack exponentially.
+STT_ARTIFACT = re.compile(r'(?:(?:[-–—]\s*끝(?:\s*[-–—.]+)?|[(\[]\s*끝\s*[)\]]\.?|[-–—]\s*감사합니다[.!]?'
+                          r'|(?:[-–—]\s*)?시청해\s*주셔서\s*감사합니다[.!]?'
+                          r'|(?:[-–—]\s*)?MBC\s*뉴스\s*[가-힣]{2,4}입니다[.!]?)\s*)+')
 
 
 class Dictation:
@@ -100,7 +108,7 @@ class Dictation:
         text = text.strip()
         match = END.search(text)
         body = text[:match.start()].strip() if match else text
-        if body:
+        if body and not STT_ARTIFACT.fullmatch(body):
             self.parts.append(body)
         if not match:
             return 'collecting', None

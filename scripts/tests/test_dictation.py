@@ -1,9 +1,10 @@
 import sys
 from pathlib import Path
+import time
 import unittest
 from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jarvis_dictation import Dictation, deliver
+from jarvis_dictation import Dictation, STT_ARTIFACT, deliver
 
 
 class DictationTest(unittest.TestCase):
@@ -131,6 +132,43 @@ class DictationTest(unittest.TestCase):
         for _ in range(100):
             self.assertEqual(d.accept('긴 이야기의 다음 문장입니다')[0], 'collecting')
         self.assertEqual(d.accept('엔터')[1]['text'].count('다음'), 100)
+
+    def test_stt_subtitle_artifacts_are_not_dictated(self):
+        # whisper-small turns non-speech chunks into subtitle boilerplate (observed 2026-10-13).
+        for artifact in ('-끝.', '-끝-', '(끝)', '- 끝 -', '—끝—', '[끝]', '(끝).', '-감사합니다. -감사합니다. -감사합니다.',
+                         'MBC 뉴스 이준범입니다.', 'MBC 뉴스 김성현입니다.', '시청해 주셔서 감사합니다.',
+                         '-끝. -끝.', '-끝.\n-끝.', '(끝) -끝-', 'MBC 뉴스 이준범입니다. MBC 뉴스 이준범입니다.'):
+            with self.subTest(artifact=artifact):
+                d = Dictation(); d.start('아테나 클로드')
+                self.assertEqual(d.accept(artifact), ('collecting', None))
+                self.assertEqual(d.parts, [])
+                self.assertEqual(d.accept('안녕하세요 클로드 아테나 엔터')[1]['text'], '안녕하세요 클로드 아테나')
+                d.start('아테나 클로드')
+                self.assertEqual(d.accept(artifact + ' 엔터'), ('empty', None))
+
+    def test_speech_resembling_artifacts_is_kept(self):
+        for text in ('끝', '끝.', '끝!', '끝내자', '오늘 일은 끝', '끝이 왜 들어가지', '감사합니다.',
+                     '감사합니다 오늘 고마웠어', 'MBC 뉴스 봤어?', 'SBS 뉴스 시간입니다.', '-뭐야?'):
+            with self.subTest(text=text):
+                d = Dictation(); d.start('아테나 클로드')
+                self.assertEqual(d.accept(text)[0], 'collecting')
+                self.assertEqual(d.accept('엔터')[1]['text'], text)
+
+    def test_observed_enter_mishearing_submits(self):
+        d = Dictation(); d.start('아테나 클로드')
+        self.assertEqual(d.accept('안녕하세요 클로드 아테나야 엠토')[1]['text'], '안녕하세요 클로드 아테나야')
+        d.start('아테나 클로드')
+        self.assertEqual(d.accept('엠토 발음을 알려줘')[0], 'collecting')
+        self.assertEqual(d.accept('엠토.')[1]['text'], '엠토 발음을 알려줘')
+        d.start('아테나 클로드')
+        self.assertEqual(d.accept('엠토'), ('empty', None))
+
+    def test_artifact_filter_stays_linear_on_long_non_matches(self):
+        for text in ('-끝' * 3000 + 'X', '-끝 ' * 3000 + 'X', 'MBC 뉴스 이준범입니다.  ' * 500 + 'X',
+                     '(끝)' * 3000 + 'X', '-감사합니다 ' * 1000 + 'X'):
+            started = time.monotonic()
+            self.assertIsNone(STT_ARTIFACT.fullmatch(text))
+            self.assertLess(time.monotonic() - started, 1.0)
 
     def test_no_retry_on_ambiguous_transport(self):
         runner = Mock(side_effect=TimeoutError())

@@ -2,7 +2,8 @@
 
 Say `자비스 아테나 코덱스`, or choose 아테나 / 볼칸 / 제우스 / 아폴론 and 코덱스 / 그록 / 커서 / 클로드 through `보이스 스타토`.
 Only mac and macmini are active destinations. Retired Hermes aliases are rejected by selection and the receiving script.
-Dictated content is preserved, and an explicit 엔터 submits once.
+Dictated content is preserved, and an explicit 엔터 submits once. Whole STT
+chunks that are only subtitle boilerplate are dropped (see STT subtitle artifacts).
 
 ## Retirement verification (T-261003-013)
 
@@ -21,7 +22,8 @@ Say `자비스 아테나 코덱스` (nodes 아테나 / 볼칸 / 제우스 / 아�
 Wait for `말씀하세요`, then dictate. Pauses do not submit. End with the spoken
 word `엔터` to send the accumulated text once. `승인 엔터` sends exactly `승인`.
 No model interprets or rewrites the dictated content. Approval words are ordinary
-user text, not a permission decision made by this router.
+user text, not a permission decision made by this router. Whole chunks that are
+known STT subtitle boilerplate are dropped (see STT subtitle artifacts below).
 
 ## Guided voice input (T-260925-037)
 
@@ -116,6 +118,28 @@ The Telegram viewer can match that receipt and label the input as Jarvis voice.
 No marker is inserted into the model prompt. The label identifies the transport,
 not the speaker, and cannot authorize an action. Unmatched inputs retain the
 unknown-source label. Other engines and older bridge installations are unchanged.
+
+## STT subtitle artifacts (T-261012-043)
+
+- Symptom (2026-10-13 KST): Vibe Key dictation to 아테나 클로드 arrived as
+  `-끝. 안녕하세요 …` and `-끝- 안녕하세요 …`; a 10/12 Cursor dictation arrived as `(끝) 안녕 …`.
+  Jarvis's own `pending-dictations` copies already carried the prefix, so it is made before delivery.
+- Cause: whisper-small transcribes a non-speech chunk (noise after `말씀하세요.`) as
+  subtitle boilerplate, and dictation joins every chunk until `엔터`. Reproduced with the
+  installed worker: 1.0–1.5 s synthetic noise gives `-끝.` or `(끝)`, 0.4 s gives
+  `MBC 뉴스 이준범입니다.`, 0.3 s silence gives `-감사합니다.` three times in one chunk.
+  `--suppress-nst` only changes the boilerplate (`날씨였습니다.`), so it is not used.
+- Behavior: a chunk made only of such boilerplate, once or repeated (`-끝-`, `-끝.`, `(끝)`,
+  `[끝]`, dash-prefixed `-감사합니다.`, `시청해 주셔서 감사합니다.`, `MBC 뉴스 <name>입니다.`),
+  is dropped. Text inside a real chunk is never rewritten. Spoken `끝` and `감사합니다`
+  come back from the same model without the dash (`끝.`, `끝!`, `감사합니다.`) and stay content.
+  Accepted loss: a whole chunk that really is `MBC 뉴스 데스크입니다.` or
+  `시청해 주셔서 감사합니다.` is dropped. `엠토`, an observed STT spelling of a spoken 엔터,
+  submits like `엔터` only at the end of a chunk.
+- Local check: `python3 -m unittest discover -s scripts/tests -p 'test_dictation*.py' -v`.
+- Live check: Vibe Key 1·1·1, wait for `말씀하세요.`, say a short sentence and `엔터`;
+  the received text has no leading `-끝-`. Unverified until the merged change is
+  installed, Jarvis is restarted, and a user voice trial lands.
 
 ## Selection STT vocabulary (T-260925-040)
 
