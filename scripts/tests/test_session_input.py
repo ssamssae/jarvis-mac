@@ -200,3 +200,34 @@ class CursorFreshSessionTest(unittest.TestCase):
         clock = iter(range(0, 1000, 30))
         with patch.object(adapter.time, 'monotonic', lambda: next(clock)), patch.object(adapter.time, 'sleep', lambda s: None):
             self.assertEqual(adapter.user_text_seen((missing, ''), '본문'), 'unverified')
+
+
+class GrokVoicePrefixTest(unittest.TestCase):
+    """The Grok bridge mirrors FIFO input to Telegram only when it starts with its [VOICE] prefix (T-260827-024)."""
+    def test_grok_fifo_payload_carries_voice_prefix_and_receipt_uses_plain_text(self):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'.claude/state'; state.mkdir(parents=True)
+            fifo = state/'grok-bridge-test.fifo'; os.mkfifo(fifo)
+            reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+            history = Path(directory)/'history.jsonl'; history.write_text('')
+            bridge = SimpleNamespace(VOICE_PROMPT_PREFIX='[VOICE] ', is_awaiting_human=lambda: False,
+                                     clear_awaiting_human=lambda: None, _tui_repl_idle_probe=lambda: True,
+                                     model_composer_empty=lambda: True, tui_history_path=lambda: history)
+            req = dict(id='123', node='apollo', engine='grok', origin='microphone', text='그록 아폴로나 안녕')
+            seen = []
+            def fake_seen(mark, text, source=None):
+                seen.append((mark[0], text)); return 'submitted'
+            try:
+                with patch.object(adapter, 'load_bridge', return_value=bridge), \
+                     patch.object(adapter.Path, 'home', classmethod(lambda cls: Path(directory))), \
+                     patch.object(adapter, 'user_text_seen', fake_seen):
+                    status = adapter.local_submit(Path(directory), req)
+                payload = os.read(reader, 4096).decode()
+            finally:
+                os.close(reader)
+            self.assertEqual(payload, '[VOICE] 그록 아폴로나 안녕\n')
+            self.assertEqual((status, seen), ('submitted', [(history, '그록 아폴로나 안녕')]))
