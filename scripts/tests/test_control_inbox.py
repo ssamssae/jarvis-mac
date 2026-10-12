@@ -14,6 +14,38 @@ from jarvis_control_inbox import events
 
 
 class InboxTests(unittest.TestCase):
+    def test_dictation_start_carries_a_validated_preset_target(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as d:
+            root = Path(d)
+            r, w = os.pipe()
+            seen = []
+            with os.fdopen(r) as source:
+                worker = threading.Thread(target=lambda: seen.extend(events(source, root)))
+                worker.start()
+                path = root / 'work-end.sock'
+                def send(payload):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                        client.settimeout(2)
+                        client.connect(str(path))
+                        client.sendall((json.dumps(payload, ensure_ascii=False) + '\n').encode())
+                        return client.recv(64)
+                try:
+                    for _ in range(100):
+                        try:
+                            if send({'intent': 'probe'}) == b'rejected\n': break
+                        except (FileNotFoundError, ConnectionRefusedError):
+                            time.sleep(.01)
+                    # Free text is never a target: the questions stay the only other path.
+                    self.assertEqual(send({'intent': 'dictation_start', 'created_at': time.time(), 'target': '선풍기 꺼줘'}), b'rejected\n')
+                    self.assertEqual(send({'intent': 'dictation_start', 'created_at': time.time(), 'target': 7}), b'rejected\n')
+                    self.assertEqual(send({'intent': 'dictation_start', 'created_at': time.time(), 'target': '아테나 클로드'}), b'queued\n')
+                finally:
+                    os.write(w, b'{"wav":"stop"}\n')
+                    os.close(w)
+                    worker.join(5)
+            self.assertEqual([e for e in seen if e.get('intent') == 'dictation_start'][0]['target'], '아테나 클로드')
+            self.assertEqual(seen[-1], {'wav': 'stop'})
+
     def test_malformed_native_lines_do_not_end_following_voice_events(self):
         with tempfile.TemporaryDirectory(dir='/tmp') as root:
             r, w = os.pipe()

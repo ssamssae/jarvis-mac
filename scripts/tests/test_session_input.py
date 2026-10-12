@@ -24,6 +24,55 @@ class SessionInputTest(unittest.TestCase):
             self.assertEqual(user_text_seen((p, 0), text), 'submitted')
 
 
+class ClaudeDeliveryTest(unittest.TestCase):
+    def make_bridge(self, screen, transcript, pasted):
+        import contextlib
+        from types import SimpleNamespace
+        transport = SimpleNamespace(composer_lock=contextlib.nullcontext, capture_pane=lambda: screen,
+                                    pane_pid=lambda: 1, _paste_prompt_unlocked=pasted.append)
+        binder = SimpleNamespace(resolve=lambda: SimpleNamespace(transcript_path=transcript))
+        return SimpleNamespace(Config=SimpleNamespace(from_env=lambda: SimpleNamespace(session_sidecar_path=transcript)),
+                               TmuxClaudeTransport=lambda config: transport, SessionBinder=lambda config, repl: binder,
+                               parse_pane_choice=lambda s: 'choice' if 'Do you want' in s else None,
+                               parse_ask_question=lambda s: None,
+                               composer_residual_text=lambda s: s.split('>', 1)[1].strip() if '>' in s else '')
+
+    def test_claude_guards_then_pastes_and_verifies_only_the_tail(self):
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory)/'session.jsonl'
+            old = json.dumps({'type':'user','message':{'role':'user','content':'본문'}})+'\n'
+            transcript.write_text(old)  # an identical older prompt must not count as delivery
+            req = dict(id='123', node='mac', engine='claude', origin='microphone', text='본문')
+            pasted = []
+            with patch.object(adapter, 'load_bridge', return_value=self.make_bridge('Do you want to proceed?', transcript, pasted)):
+                self.assertEqual(adapter.local_submit(Path(directory), req), 'busy')
+            with patch.object(adapter, 'load_bridge', return_value=self.make_bridge('> draft text', transcript, pasted)):
+                self.assertEqual(adapter.local_submit(Path(directory), req), 'composer_occupied')
+            bridge = self.make_bridge('> ', transcript, pasted)
+            with patch.object(adapter, 'load_bridge', return_value=bridge):
+                self.assertEqual(adapter.local_submit(Path(directory), req, probe=True), 'ready')
+                self.assertEqual(pasted, [])
+                def arrive(_seconds):
+                    with transcript.open('a') as handle:
+                        handle.write(old)
+                with patch.object(adapter.time, 'sleep', arrive):
+                    self.assertEqual(adapter.local_submit(Path(directory), req), 'submitted')
+            self.assertEqual(pasted, ['본문'])
+
+    def test_claude_without_a_known_transcript_is_unverified_not_resent(self):
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        req = dict(id='123', node='zeus', engine='claude', origin='microphone', text='본문')
+        pasted = []
+        bridge = self.make_bridge('> ', None, pasted)
+        bridge.SessionBinder = lambda config, repl: (_ for _ in ()).throw(RuntimeError('ambiguous'))
+        with patch.object(adapter, 'load_bridge', return_value=bridge):
+            self.assertEqual(adapter.local_submit(Path('/tmp'), req), 'unverified')
+        self.assertEqual(pasted, ['본문'])
+
+
 class ProvenanceDeliveryTest(unittest.TestCase):
     def test_metadata_precedes_unchanged_prompt_and_failed_paste_removes_it(self):
         import contextlib

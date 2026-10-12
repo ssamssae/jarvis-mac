@@ -258,7 +258,8 @@ def main():
             if external_end or external_dictation or butler_phrase:
                 if dictation.target or dictation.selecting or time.monotonic() < max(work_end.until, japanese_command_until):
                     continue
-                text, kind, question, stt_s = '', 'question', butler_phrase or ('보이스 스타토' if external_dictation else '시고토 오와리'), 0
+                external_target = event.get('target') if external_dictation else None
+                text, kind, question, stt_s = '', 'question', butler_phrase or ((external_target or '보이스 스타토') if external_dictation else '시고토 오와리'), 0
                 gate.armed_until = 0
             else:
                 # Reject one broken capture without taking down the controller.
@@ -432,7 +433,8 @@ def main():
                     speech.submit_acknowledgement()
                     selection_answer = dictation.select(question, cancelled=is_cancel(question),
                                                          start_source='google-home-matter' if external_dictation else 'microphone') if not japanese_command else None
-                    dictation_control = not japanese_command and (selection_answer is not None or dictation.start(question))
+                    dictation_control = not japanese_command and (selection_answer is not None or dictation.start(
+                        question, start_source='google-home-matter' if external_dictation else 'microphone'))
                     japanese_trigger = not japanese_command and not dictation_control and jarvis_work_end.normalize(question) == '일본어'
                     plan = home.plan(question) if not dictation_control and not japanese_command and not japanese_trigger else None
                     ending = work_end.accept(question, time.monotonic(), event['speech_started_wall']) if not dictation_control else None

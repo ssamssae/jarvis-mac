@@ -14,6 +14,10 @@ class ListenerDictationTest(unittest.TestCase):
     def test_matter_only_starts_then_local_microphone_selects_and_dictates(self):
         self.check_flow([None, None, '코덱스', '아테나', None, '승인', '', '엔터'],
                         ['armed', 'armed', 'armed', 'dictating', 'dictating', 'dictating', 'dictating'], guided=True)
+    def test_matter_preset_target_skips_questions(self):
+        self.check_flow([None, '승인', '', '엔터'], ['dictating', 'dictating', 'dictating'],
+                        external_target='아테나 클로드', expected_engine='claude')
+
     def test_named_target_multisegment_literal_approval_and_single_enter(self):
         self.check_named_target('자비스 아테나 코덱스')
 
@@ -49,7 +53,8 @@ class ListenerDictationTest(unittest.TestCase):
                         playback_started=False, expected_delivery=False)
 
     def check_flow(self, transcripts, expected_states, guided=False, prompt_timeout=False,
-                   playback_started=True, expected_delivery=True, custom_worker=True):
+                   playback_started=True, expected_delivery=True, custom_worker=True,
+                   external_target=None, expected_engine='codex'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'config.json').write_text(json.dumps({'cast_name':'test', 'stt_worker':'test',
@@ -87,6 +92,8 @@ class ListenerDictationTest(unittest.TestCase):
                     if transcripts[index] is None:
                         event = dict(source='google-home-matter', intent='dictation_start',
                                      speech_started_wall=now, speech_ended_wall=now, capture_ended_wall=now)
+                        if external_target:
+                            event['target'] = external_target
                     yield event
                 final_states.append(json.loads((root/'status.json').read_text()))
             with patch.object(sys, 'argv', ['listener', '--state-dir', directory]), \
@@ -115,7 +122,7 @@ class ListenerDictationTest(unittest.TestCase):
             self.assertEqual(len(requests), 1)
             self.assertEqual(requests[0]['text'], '승인')
             self.assertEqual(requests[0]['node'], 'mac')
-            self.assertEqual(requests[0]['engine'], 'codex')
+            self.assertEqual(requests[0]['engine'], expected_engine)
             self.assertEqual(requests[0]['capture_node'], 'mac')
             self.assertEqual(requests[0]['start_source'], 'google-home-matter' if transcripts[0] is None else 'microphone')
             qa.assert_not_called()
@@ -125,4 +132,7 @@ class ListenerDictationTest(unittest.TestCase):
             if guided:
                 self.assertIn(('어디로 연결할까요?',), [call.args for call in speech.submit.call_args_list])
                 self.assertIn(('어떤 노드인가요?',), [call.args for call in speech.submit.call_args_list])
+            if external_target:
+                self.assertNotIn(('어디로 연결할까요?',), [call.args for call in speech.submit.call_args_list])
+                self.assertNotIn(('어떤 노드인가요?',), [call.args for call in speech.submit.call_args_list])
             self.assertEqual(list((root/'pending-dictations').glob('*.json')), [])

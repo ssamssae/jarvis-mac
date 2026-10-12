@@ -8,8 +8,8 @@ from jarvis_dictation import Dictation, deliver
 
 class DictationTest(unittest.TestCase):
     def test_guided_selection_all_targets(self):
-        for engine, expected_engine in [('코덱스', 'codex'), ('커서', 'cursor'), ('그록', 'grok')]:
-            for node, expected_node in [('아테나', 'mac'), ('볼칸', 'macmini')]:
+        for engine, expected_engine in [('코덱스', 'codex'), ('커서', 'cursor'), ('그록', 'grok'), ('클로드', 'claude'), ('클라우드', 'claude')]:
+            for node, expected_node in [('아테나', 'mac'), ('볼칸', 'macmini'), ('제우스', 'zeus'), ('아폴론', 'apollo')]:
                 with self.subTest(engine=engine, node=node):
                     d = Dictation()
                     self.assertEqual(d.select('음성 입력'), '어디로 연결할까요?')
@@ -19,6 +19,28 @@ class DictationTest(unittest.TestCase):
                     self.assertFalse(d.selecting)
                     self.assertEqual(d.target, (expected_node, expected_engine))
                     self.assertEqual(d.accept('원문 CASE 엔터')[1]['text'], '원문 CASE')
+
+    def test_preset_target_starts_without_questions_and_keeps_source(self):
+        for phrase, expected in [('아테나 클로드', ('mac', 'claude')), ('볼칸 클로드', ('macmini', 'claude')),
+                                 ('제우스 코덱스', ('zeus', 'codex')), ('아폴론 Claude', ('apollo', 'claude'))]:
+            d = Dictation()
+            self.assertTrue(d.start(phrase, start_source='google-home-matter'))
+            self.assertFalse(d.selecting)
+            self.assertEqual(d.target, expected)
+            request = d.accept('본문 엔터')[1]
+            self.assertEqual((request['node'], request['engine'], request['text']), (*expected, '본문'))
+            self.assertEqual(request['start_source'], 'google-home-matter')
+        d = Dictation()
+        self.assertTrue(d.start('아테나 클로드'))
+        self.assertEqual(d.accept('본문 엔터')[1]['start_source'], 'microphone')
+        self.assertFalse(Dictation().start('아테나 클로드가 뭐야'))
+
+    def test_engine_and_node_prompts_name_every_choice(self):
+        d = Dictation()
+        d.select('보이스 스타토')
+        self.assertEqual(d.select('모르는 엔진'), '코덱스, 커서, 그록, 클로드 중 어디로 연결할까요?')
+        d.select('클로드')
+        self.assertEqual(d.select('모르는 노드'), '아테나, 볼칸, 제우스, 아폴론 중 어떤 노드인가요?')
 
     def test_voice_start_unified_invocation_preserves_body(self):
         for trigger in ['보이스 스타토', '보이스스타토!', '보이스 스타트', '음성 입력']:

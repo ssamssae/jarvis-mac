@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 2026-10-12
+
+- Claude is a dictation engine (`클로드` / `claude` / STT spelling `클라우드`),
+  delivered through the existing Claude bridge tmux transport with the same
+  prompt/draft guards as Codex. Nodes `제우스` (zeus) and `아폴론` (apollo) join
+  아테나 / 볼칸; the selection prompts now name every choice.
+- A local trigger may preset the target: `request_dictation.py --target "아테나 클로드"`
+  starts dictation at `말씀하세요.` without the engine and node questions. The
+  phrase is validated as a standalone `node engine` invocation before it is queued.
+- Claude delivery verifies only the transcript bytes appended after the paste,
+  so large session transcripts are not re-read on every poll.
+
 ## v1.2.0 — 2026-09-26
 
 - Optional paired Matter adapters connect Google Nest to work-start, confirmed
