@@ -2,9 +2,10 @@
 
 ## Unreleased — 2026-10-12
 
-- Dictation drops whole STT chunks that are whisper subtitle boilerplate (`-끝-`, `(끝)`,
-  dash-prefixed `-감사합니다.`, `MBC 뉴스 …입니다.`); noise after `말씀하세요.` had put
-  them in front of the dictated text. `엠토`, an observed STT spelling, submits like `엔터`.
+- Dictation drops whole STT chunks that are only whisper subtitle boilerplate, once or
+  repeated (`-끝-`, `(끝)`, dash-prefixed `-감사합니다.`, `MBC 뉴스 …입니다.`); noise after
+  `말씀하세요.` had put them in front of the dictated text. `엠토`, an observed STT spelling,
+  submits like `엔터`.
 - Claude is a dictation engine (`클로드` / `claude` / STT spelling `클라우드`),
   delivered through the existing Claude bridge tmux transport with the same
   prompt/draft guards as Codex. Nodes `제우스` (zeus) and `아폴론` (apollo) join
