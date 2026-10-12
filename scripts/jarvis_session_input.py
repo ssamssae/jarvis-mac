@@ -37,8 +37,14 @@ def load_bridge(root, engine):
 
 
 def transcript_mark(path):
+    """(path, baseline) — a session that has not chatted yet owns no transcript; never raise before the paste."""
+    if not path:
+        return None, ''
     path = Path(path)
-    return path, path.read_text()
+    try:
+        return path, path.read_text()
+    except OSError:
+        return path, ''
 
 
 def user_text_count(data, text):
@@ -72,7 +78,11 @@ def user_text_seen(mark, text, source=None):
             candidate = source()
             if candidate and Path(candidate) != path and Path(candidate).stat().st_mtime >= started-2:
                 path, before = Path(candidate), 0
-        if path is not None and user_text_count(path.read_text(), text) > before:
+        try:
+            current = path.read_text() if path is not None else ''
+        except OSError:
+            current = ''  # The transcript may appear only after the first input lands.
+        if current and user_text_count(current, text) > before:
             return 'submitted'
         time.sleep(.2)
     return 'unverified'
@@ -199,9 +209,13 @@ def local_submit(root, request, probe=False):
             if not bridge._tui_compose_shows_idle_placeholder(screen):
                 return 'composer_occupied'
             if not probe:
+                # A fresh Cursor TUI (no chat yet) owns no transcript until the first input (apollo 2026-10-12).
                 mark = transcript_mark(bridge._pick_active_transcript_path())
                 bridge._tui_paste_unlocked(text)
-        return 'ready' if probe else user_text_seen(mark, text, lambda: bridge._pick_active_transcript_path(str(mark[0]), text))
+        if probe:
+            return 'ready'
+        prior = str(mark[0]) if mark[0] else None
+        return user_text_seen(mark, text, lambda: bridge._pick_active_transcript_path(prior, text))
     # The existing FIFO serializes with Grok's own job lock.
     if bridge.is_awaiting_human():
         if request.get('origin') != 'microphone' or probe:

@@ -151,3 +151,52 @@ class RetiredTargetTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unknown_target'):
                 adapter.main()
             submit.assert_not_called()
+
+
+class CursorFreshSessionTest(unittest.TestCase):
+    """2026-10-12 apollo: a Cursor TUI that has never chatted owns no transcript; delivery must still paste."""
+    def make_bridge(self, pasted, transcript):
+        import contextlib
+        from types import SimpleNamespace
+        def pick(prior_path=None, pasted_text=None):
+            return transcript if transcript.exists() else None
+        return SimpleNamespace(composer_lock=contextlib.nullcontext, _tui_capture_pane=lambda: 'idle',
+                               _tui_pane_shows_approval_overlay=lambda s: False, _tui_pane_shows_choice_menu=lambda s: False,
+                               _tui_pane_shows_model_picker=lambda s: False, _tui_compose_shows_idle_placeholder=lambda s: True,
+                               _pick_active_transcript_path=pick, _tui_paste_unlocked=pasted.append)
+
+    def test_cursor_without_transcript_pastes_then_finds_the_new_transcript(self):
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory)/'chat.jsonl'
+            pasted = []
+            def paste(text):
+                pasted.append(text)
+                transcript.write_text(json.dumps({'role': 'user', 'content': text}, ensure_ascii=False)+'\n')
+            bridge = self.make_bridge(pasted, transcript)
+            bridge._tui_paste_unlocked = paste
+            req = dict(id='123', node='apollo', engine='cursor', origin='microphone', text='아폴론 첫 입력')
+            with patch.object(adapter, 'load_bridge', return_value=bridge):
+                self.assertEqual(adapter.local_submit(Path(directory), req), 'submitted')
+            self.assertEqual(pasted, ['아폴론 첫 입력'])
+
+    def test_cursor_probe_without_transcript_is_ready(self):
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = self.make_bridge([], Path(directory)/'none.jsonl')
+            req = dict(id='123', node='apollo', engine='cursor', origin='microphone', text='x')
+            with patch.object(adapter, 'load_bridge', return_value=bridge):
+                self.assertEqual(adapter.local_submit(Path(directory), req, True), 'ready')
+
+    def test_missing_transcript_marks_never_raise(self):
+        import jarvis_session_input as adapter
+        from unittest.mock import patch
+        self.assertEqual(adapter.transcript_mark(None), (None, ''))
+        missing = Path(tempfile.gettempdir())/'jarvis-session-input-missing.jsonl'
+        missing.unlink(missing_ok=True)
+        self.assertEqual(adapter.transcript_mark(missing), (missing, ''))
+        clock = iter(range(0, 1000, 30))
+        with patch.object(adapter.time, 'monotonic', lambda: next(clock)), patch.object(adapter.time, 'sleep', lambda s: None):
+            self.assertEqual(adapter.user_text_seen((missing, ''), '본문'), 'unverified')
