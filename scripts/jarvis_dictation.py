@@ -25,6 +25,14 @@ END = re.compile(r'(?:^|\s)(?:엔터|엠토|enter)[\s,.!?。！？]*$', re.I)
 STT_ARTIFACT = re.compile(r'(?:(?:[-–—]\s*끝(?:\s*[-–—.]+)?|[(\[]\s*끝\s*[)\]]\.?|[-–—]\s*감사합니다[.!]?'
                           r'|(?:[-–—]\s*)?시청해\s*주셔서\s*감사합니다[.!]?'
                           r'|(?:[-–—]\s*)?MBC\s*뉴스\s*[가-힣]{2,4}입니다[.!]?)\s*)+')
+# 「잔여」 is pronounced [자녀], so whisper-small writes the commoner 「자녀」 (observed 2026-10-13).
+# Correct only at a word start, so a longer word that merely contains the syllables stays as heard.
+STT_CORRECTIONS = {'자녀': '잔여'}
+STT_CORRECTION = re.compile(r'(?<!\w)(' + '|'.join(map(re.escape, STT_CORRECTIONS)) + ')')
+
+
+def _correct(text):
+    return STT_CORRECTION.sub(lambda match: STT_CORRECTIONS[match.group(1)], text)
 
 
 class Dictation:
@@ -115,7 +123,7 @@ class Dictation:
         if not self.parts:
             return 'empty', None
         request = dict(id=self.request_id, node=self.target[0], engine=self.target[1], origin='microphone',
-                       text=' '.join(self.parts), start_source=self.start_source, capture_node=self.capture_node)
+                       text=_correct(' '.join(self.parts)), start_source=self.start_source, capture_node=self.capture_node)
         self.cancel()
         return 'submit', request
 

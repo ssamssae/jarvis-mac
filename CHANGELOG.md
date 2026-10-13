@@ -2,6 +2,9 @@
 
 ## Unreleased — 2026-10-12
 
+- Dictation corrects the observed homophone `자녀` → `잔여` at a word start: `잔여` is
+  pronounced [자녀], and whisper-small writes the commoner word. A longer word that only
+  contains the syllables stays as heard; add further observed pairs to `STT_CORRECTIONS`.
 - Dictation drops whole STT chunks that are only whisper subtitle boilerplate, once or
   repeated (`-끝-`, `(끝)`, dash-prefixed `-감사합니다.`, `MBC 뉴스 …입니다.`); noise after
   `말씀하세요.` had put them in front of the dictated text. `엠토`, an observed STT spelling,
