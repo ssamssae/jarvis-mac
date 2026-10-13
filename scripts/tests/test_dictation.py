@@ -163,6 +163,18 @@ class DictationTest(unittest.TestCase):
         d.start('아테나 클로드')
         self.assertEqual(d.accept('엠토'), ('empty', None))
 
+    def test_observed_homophone_janyeo_is_corrected(self):
+        # 「잔여」 is pronounced [자녀]; whisper-small writes the commoner 「자녀」 (observed 2026-10-13).
+        for heard, expected in (('자녀 뭐야', '잔여 뭐야'), ('오늘 자녀 작업 보여줘', '오늘 잔여 작업 보여줘'),
+                                ('자녀는 몇 개야', '잔여는 몇 개야')):
+            with self.subTest(heard=heard):
+                d = Dictation(); d.start('아테나 클로드')
+                self.assertEqual(d.accept(heard + ' 엔터')[1]['text'], expected)
+
+    def test_homophone_correction_keeps_word_internal_match(self):
+        d = Dictation(); d.start('아테나 클로드')
+        self.assertEqual(d.accept('남자녀석 엔터')[1]['text'], '남자녀석')
+
     def test_artifact_filter_stays_linear_on_long_non_matches(self):
         for text in ('-끝' * 3000 + 'X', '-끝 ' * 3000 + 'X', 'MBC 뉴스 이준범입니다.  ' * 500 + 'X',
                      '(끝)' * 3000 + 'X', '-감사합니다 ' * 1000 + 'X'):
