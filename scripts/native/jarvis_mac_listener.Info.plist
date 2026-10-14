@@ -9,7 +9,7 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.1.0</string>
     <key>CFBundleVersion</key><string>2</string>
-    <key>LSUIElement</key><true/>
+    <key>CFBundleIconFile</key><string>JarvisMacOSS</string>
     <key>LSMultipleInstancesProhibited</key><true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>같은 네트워크의 Google Nest 스피커를 찾아 자비스 답변을 재생합니다.</string>

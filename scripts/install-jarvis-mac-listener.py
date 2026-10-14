@@ -69,6 +69,8 @@ def main():
     contents = app/'Contents'
     (contents/'MacOS').mkdir(parents=True, exist_ok=True)
     shutil.copy2(scripts/'native/jarvis_mac_listener.Info.plist', contents/'Info.plist')
+    (contents/'Resources').mkdir(exist_ok=True)
+    shutil.copy2(scripts/'native/JarvisMacOSS.icns', contents/'Resources'/'JarvisMacOSS.icns')
     subprocess.run(['xcrun','swiftc','-swift-version','5','-O',str(scripts/'native/jarvis_mac_listener.swift'),
                     '-o',str(contents/'MacOS/JarvisMacOSS')],check=True)
     subprocess.run(['codesign','--force','--sign','-','--identifier',LABEL,str(app)],check=True)
