@@ -72,6 +72,10 @@ struct ControllerRecovery {
 final class Listener: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
     private var pauseItem: NSMenuItem!
+    private var mainPauseItem: NSMenuItem?
+    private var statusWindow: NSWindow?
+    private var statusWindowLabel: NSTextField?
+    private var statusWindowPauseButton: NSButton?
     private var engine = AVAudioEngine()
     private let captureQueue = DispatchQueue(label: "jarvis.capture")
     private let slots = DispatchSemaphore(value: 8)
@@ -131,8 +135,54 @@ final class Listener: NSObject, NSApplicationDelegate {
     private let minimumVoiceSeconds = 0.18
     private let preRollSeconds = 0.35
 
+    /// 자비스는 메뉴바 아이콘과 함께 일반 Dock 앱으로 남는다: Dock 실행 점과 왼쪽 위 앱 메뉴가 항상 보인다.
+    static let restingActivationPolicy: NSApplication.ActivationPolicy = .regular
+
+    /// 왼쪽 위 앱 메뉴. target 이 nil 이면 자비스 항목도 응답 체인으로 보낸다(테스트용).
+    static func makeMainMenu(target: AnyObject?) -> NSMenu {
+        func item(_ title: String, _ action: Selector, _ key: String = "",
+                  _ mods: NSEvent.ModifierFlags = .command, own: Bool = false) -> NSMenuItem {
+            let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            it.keyEquivalentModifierMask = mods
+            if own { it.target = target }
+            return it
+        }
+        func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+            let menu = NSMenu(title: title)
+            items.forEach(menu.addItem)
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            holder.submenu = menu
+            return holder
+        }
+        let main = NSMenu()
+        main.addItem(submenu("Jarvis", [
+            item("Jarvis에 관하여", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            .separator(),
+            item("상태 보기", #selector(Listener.showStatusWindow), "0", own: true),
+            item("마이크 일시 정지", #selector(Listener.togglePause), own: true),
+            .separator(),
+            item("Jarvis 가리기", #selector(NSApplication.hide(_:)), "h"),
+            item("기타 가리기", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
+            item("모두 보기", #selector(NSApplication.unhideAllApplications(_:))),
+            .separator(),
+            item("Jarvis 종료", #selector(Listener.quitApp), "q", own: true),
+        ]))
+        main.addItem(submenu("윈도우", [
+            item("최소화", #selector(NSWindow.performMiniaturize(_:)), "m"),
+            item("닫기", #selector(NSWindow.performClose(_:)), "w"),
+            .separator(),
+            item("모두 앞으로 가져오기", #selector(NSApplication.arrangeInFront(_:))),
+        ]))
+        return main
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(Self.restingActivationPolicy)
+        let mainMenu = Self.makeMainMenu(target: self)
+        NSApp.mainMenu = mainMenu
+        NSApp.windowsMenu = mainMenu.items.first { $0.submenu?.title == "윈도우" }?.submenu
+        mainPauseItem = mainMenu.items.compactMap { $0.submenu }.flatMap { $0.items }
+            .first { $0.action == #selector(Listener.togglePause) }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         let title = NSMenuItem(title: "Jarvis · 준비 중", action: nil, keyEquivalent: "")
@@ -169,8 +219,41 @@ final class Listener: NSObject, NSApplicationDelegate {
         statusLabel = text
         item.button?.title = "🎙 " + text
         item.menu?.item(withTag: 1)?.title = "Jarvis · " + text
+        statusWindowLabel?.stringValue = "상태: " + text
         writeStatus()
     }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showStatusWindow()
+        return true
+    }
+
+    /// Dock 아이콘이나 「상태 보기」로 여는 작은 상태 창. 상태 글자와 마이크 일시 정지 버튼만 둔다.
+    @objc func showStatusWindow() {
+        if statusWindow == nil {
+            let label = NSTextField(labelWithString: "상태: " + statusLabel)
+            label.font = .systemFont(ofSize: 15, weight: .medium)
+            let button = NSButton(title: pauseTitle, target: self, action: #selector(Listener.togglePause))
+            let stack = NSStackView(views: [label, button])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 12
+            stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 110),
+                                  styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            window.title = "자비스"
+            window.isReleasedWhenClosed = false
+            window.contentView = stack
+            window.center()
+            statusWindow = window
+            statusWindowLabel = label
+            statusWindowPauseButton = button
+        }
+        statusWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var pauseTitle: String { manuallyPaused ? "마이크 다시 듣기" : "마이크 일시 정지" }
     private func writeStatus() {
         guard configured else { return }
         let snapshot: [String: Any] = ["microphone_authorized": microphoneAuthorized,
@@ -210,9 +293,11 @@ final class Listener: NSObject, NSApplicationDelegate {
         updateCapture()
         status(text)
     }
-    @objc private func togglePause() {
+    @objc func togglePause() {
         manuallyPaused.toggle()
-        pauseItem.title = manuallyPaused ? "마이크 다시 듣기" : "마이크 일시 정지"
+        pauseItem.title = pauseTitle
+        mainPauseItem?.title = pauseTitle
+        statusWindowPauseButton?.title = pauseTitle
         if manuallyPaused {
             setGate(false)
             engine.stop()
@@ -622,7 +707,7 @@ final class Listener: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func quitApp() { NSApp.terminate(nil) }
+    @objc func quitApp() { NSApp.terminate(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if terminating { return .terminateNow }
         quitting = true
