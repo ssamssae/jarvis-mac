@@ -2,6 +2,10 @@
 
 ## Unreleased — 2026-10-12
 
+- 2026-10-19 (T-261019-007): microphone recovery no longer gives up after three failed
+  rebuilds. It shows `마이크 재연결 대기` and tries another three times after each 30-second
+  cooldown until the engine runs, so a call that holds the input device for minutes no
+  longer leaves Jarvis at `마이크 재연결 실패` until the app is restarted.
 - 2026-10-19 (T-261019-003): `dictation_start` is answered `microphone_unavailable` while the
   native microphone engine is stopped (`native-status.json` `engine_running: false`), and
   `request_dictation.py` passes the listener's answer through (`queued` /

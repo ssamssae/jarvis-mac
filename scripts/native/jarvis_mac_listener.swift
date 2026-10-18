@@ -38,14 +38,27 @@ struct AdaptiveVoiceGate {
 }
 
 // Bounded recovery of an engine stopped by a device/configuration change.
+// Three quick attempts, then another three after each 30 s cooldown: a call can keep
+// the input device unavailable for minutes (Berry live speech, 2026-10-17/18), and a
+// final third failure left Jarvis deaf until the app was restarted.
 // The menu's explicit pause, shutdown and fatal controller errors stay final.
 struct MicrophoneRecovery {
+    static let quickAttempts = 3
+    static let cooldownSeconds = 30.0
     private(set) var attempts = 0
+    private var lastAttempt = 0.0
+    /// The quick attempts are spent; the next burst waits for the cooldown.
+    var waiting: Bool { attempts >= Self.quickAttempts }
     mutating func shouldAttempt(running: Bool, authorized: Bool, paused: Bool,
-                               quitting: Bool, failed: Bool) -> Bool {
+                               quitting: Bool, failed: Bool, now: Double) -> Bool {
         if running { attempts = 0; return false }
-        guard authorized, !paused, !quitting, !failed, attempts < 3 else { return false }
+        guard authorized, !paused, !quitting, !failed else { return false }
+        if waiting {
+            guard now - lastAttempt >= Self.cooldownSeconds else { return false }
+            attempts = 0
+        }
         attempts += 1
+        lastAttempt = now
         return true
     }
 }
@@ -497,10 +510,12 @@ final class Listener: NSObject, NSApplicationDelegate {
     private func recoverMicrophoneIfNeeded() {
         guard microphoneRecovery.shouldAttempt(running: engine.isRunning,
             authorized: microphoneAuthorized, paused: manuallyPaused,
-            quitting: quitting, failed: fatalStatus != nil || recoveringController) else {
+            quitting: quitting, failed: fatalStatus != nil || recoveringController,
+            now: ProcessInfo.processInfo.systemUptime) else {
             if !engine.isRunning && microphoneAuthorized && !manuallyPaused && !quitting
-                && fatalStatus == nil && !recoveringController && microphoneRecovery.attempts >= 3 {
-                fail("마이크 재연결 실패")
+                && fatalStatus == nil && !recoveringController && microphoneRecovery.waiting
+                && statusLabel != "마이크 재연결 대기" {
+                status("마이크 재연결 대기")
             }
             return
         }
@@ -509,7 +524,8 @@ final class Listener: NSObject, NSApplicationDelegate {
             try rebuildMicrophone()
             microphoneRecoveryCount += 1
         } catch {
-            if microphoneRecovery.attempts >= 3 { fail("마이크 재연결 실패") }
+            // Not final: the next burst starts after the cooldown, without an app restart.
+            if microphoneRecovery.waiting { status("마이크 재연결 대기") }
         }
     }
 
