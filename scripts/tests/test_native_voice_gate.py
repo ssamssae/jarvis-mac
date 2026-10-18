@@ -74,6 +74,21 @@ require(attempt(70), "and the cooldown keeps repeating until the engine runs")
 require(!attempt(71, running: true), "running engine is untouched")
 require(recovery.attempts == 0 && !recovery.waiting, "a running engine resets the budget")
 require(attempt(72), "later independent device change recovers")
+// 2026-10-19: after the device graph changed under a running engine, no in-process rebuild
+// succeeded; a relaunch did. Relaunch once the burst after the cooldown has failed too.
+var relaunch = MicrophoneRecovery()
+func retry(_ now: Double, running: Bool = false) -> Bool {
+    relaunch.shouldAttempt(running: running, authorized: true, paused: false, quitting: false, failed: false, now: now)
+}
+require(retry(0) && retry(1) && retry(2) && relaunch.bursts == 1, "first burst")
+require(relaunch.waiting && !relaunch.needsRelaunch, "one failed burst waits for the cooldown first")
+require(retry(32) && retry(33) && retry(34) && relaunch.bursts == 2, "burst after the cooldown")
+require(relaunch.needsRelaunch, "the failed cooldown burst asks for a relaunch")
+require(!retry(35, running: true) && relaunch.bursts == 0 && !relaunch.needsRelaunch, "a running engine clears it")
+require(MicrophoneRelaunch.allowed(lastRelaunch: nil, now: 1000), "first relaunch")
+require(!MicrophoneRelaunch.allowed(lastRelaunch: 1000, now: 1599), "at most one relaunch per ten minutes")
+require(MicrophoneRelaunch.allowed(lastRelaunch: 1000, now: 1600), "allowed again after ten minutes")
+require(MicrophoneRelaunch.allowed(lastRelaunch: 2000, now: 1000), "a clock moved backwards does not block it for good")
 var controller = ControllerRecovery()
 require(controller.nextDelay(at: 10) == 1, "first restart waits 1s")
 controller.ready(at: 11)
