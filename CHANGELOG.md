@@ -2,6 +2,13 @@
 
 ## Unreleased — 2026-10-12
 
+- 2026-10-19 (T-261019-003): `dictation_start` is answered `microphone_unavailable` while the
+  native microphone engine is stopped (`native-status.json` `engine_running: false`), and
+  `request_dictation.py` passes the listener's answer through (`queued` /
+  `microphone_unavailable` / `rejected`; `unavailable` only when the socket is gone). A
+  Berry call had left JarvisMacOSS at `마이크 재연결 실패`; a Vibe Key request was still
+  queued, so Jarvis said `말씀하세요.` and held the hallway status light green with no
+  capture to end it.
 - Dictation corrects the observed homophone `자녀` → `잔여` at a word start: `잔여` is
   pronounced [자녀], and whisper-small writes the commoner word. A longer word that only
   contains the syllables stays as heard; add further observed pairs to `STT_CORRECTIONS`.
