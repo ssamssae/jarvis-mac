@@ -41,25 +41,48 @@ struct AdaptiveVoiceGate {
 // Three quick attempts, then another three after each 30 s cooldown: a call can keep
 // the input device unavailable for minutes (Berry live speech, 2026-10-17/18), and a
 // final third failure left Jarvis deaf until the app was restarted.
+// When the burst after the cooldown fails too, the app relaunches (MicrophoneRelaunch).
 // The menu's explicit pause, shutdown and fatal controller errors stay final.
 struct MicrophoneRecovery {
     static let quickAttempts = 3
     static let cooldownSeconds = 30.0
     private(set) var attempts = 0
+    private(set) var bursts = 0
     private var lastAttempt = 0.0
     /// The quick attempts are spent; the next burst waits for the cooldown.
     var waiting: Bool { attempts >= Self.quickAttempts }
+    /// The first burst and the burst after the cooldown have both failed.
+    var needsRelaunch: Bool { waiting && bursts >= 2 }
     mutating func shouldAttempt(running: Bool, authorized: Bool, paused: Bool,
                                quitting: Bool, failed: Bool, now: Double) -> Bool {
-        if running { attempts = 0; return false }
+        if running { attempts = 0; bursts = 0; return false }
         guard authorized, !paused, !quitting, !failed else { return false }
         if waiting {
             guard now - lastAttempt >= Self.cooldownSeconds else { return false }
             attempts = 0
         }
+        if attempts == 0 { bursts += 1 }
         attempts += 1
         lastAttempt = now
         return true
+    }
+}
+
+// After the device graph changed under a running engine, this process's CoreAudio client
+// kept naming removed devices and no in-process rebuild succeeded, even with the device
+// named explicitly; a fresh process recovered at once (2026-10-18 21:54, reproduced on
+// 2026-10-19). Relaunching is the recovery that always worked by hand. At most one per ten
+// minutes, so a missing microphone cannot cause a relaunch loop.
+enum MicrophoneRelaunch {
+    static let minimumInterval = 600.0
+    static func allowed(lastRelaunch: Double?, now: Double) -> Bool {
+        guard let last = lastRelaunch else { return true }
+        return now - last >= minimumInterval || now < last
+    }
+    /// /bin/sh arguments: wait for `pid` to exit (at most 60 s), then reopen the bundle.
+    static func command(pid: Int32, bundle: String, open: String = "/usr/bin/open") -> [String] {
+        ["-c", "i=0; while kill -0 \(pid) 2>/dev/null && [ $i -lt 300 ]; do sleep 0.2; i=$((i+1)); done; exec \"$1\" -g -a \"$2\"",
+         "jarvis-relaunch", open, bundle]
     }
 }
 
@@ -112,6 +135,11 @@ final class Listener: NSObject, NSApplicationDelegate {
     private var tapInstalled = false
     private var microphoneRecovery = MicrophoneRecovery()
     private var microphoneRecoveryCount = 0
+    private lazy var lastMicrophoneRelaunch: Double? = {
+        guard let data = try? Data(contentsOf: self.stateDir.appendingPathComponent("last-microphone-relaunch.json")),
+              let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return receipt["updated_wall"] as? Double
+    }()
     private var quitting = false
     private var terminating = false
     private var microphoneAuthorized = false
@@ -223,7 +251,8 @@ final class Listener: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.microphoneAuthorized = granted
                 guard granted else { self.fail("마이크 권한 필요"); return }
-                do { try self.startMicrophone() } catch { self.fail("마이크 시작 실패") }
+                // A failed first start goes through the same recovery as a stopped engine.
+                do { try self.startMicrophone() } catch { self.status("마이크 다시 연결 중") }
             }
         }
     }
@@ -513,9 +542,9 @@ final class Listener: NSObject, NSApplicationDelegate {
             quitting: quitting, failed: fatalStatus != nil || recoveringController,
             now: ProcessInfo.processInfo.systemUptime) else {
             if !engine.isRunning && microphoneAuthorized && !manuallyPaused && !quitting
-                && fatalStatus == nil && !recoveringController && microphoneRecovery.waiting
-                && statusLabel != "마이크 재연결 대기" {
-                status("마이크 재연결 대기")
+                && fatalStatus == nil && !recoveringController && microphoneRecovery.waiting {
+                if microphoneRecovery.needsRelaunch && relaunchForMicrophone() { return }
+                if statusLabel != "마이크 재연결 대기" { status("마이크 재연결 대기") }
             }
             return
         }
@@ -527,6 +556,34 @@ final class Listener: NSObject, NSApplicationDelegate {
             // Not final: the next burst starts after the cooldown, without an app restart.
             if microphoneRecovery.waiting { status("마이크 재연결 대기") }
         }
+    }
+
+    /// Restart the whole app once in-process recovery has failed (see MicrophoneRelaunch).
+    private func relaunchForMicrophone() -> Bool {
+        let now = Date().timeIntervalSince1970
+        guard MicrophoneRelaunch.allowed(lastRelaunch: lastMicrophoneRelaunch, now: now) else { return false }
+        // Record first: the ten-minute bound must survive the relaunch it allows.
+        let receipt: [String: Any] = ["reason": "microphone_recovery_failed", "updated_wall": now,
+            "pid": Int(getpid()), "bursts": microphoneRecovery.bursts,
+            "microphone_recovery_count": microphoneRecoveryCount]
+        let path = stateDir.appendingPathComponent("last-microphone-relaunch.json")
+        guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
+              (try? data.write(to: path, options: .atomic)) != nil else { return false }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        lastMicrophoneRelaunch = now
+        // Its own session: the helper must outlive this app's process group.
+        var attributes: posix_spawnattr_t? = nil
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+        let argv = ["/bin/sh"] + MicrophoneRelaunch.command(pid: getpid(), bundle: Bundle.main.bundlePath)
+        var cArguments: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
+        defer { cArguments.forEach { free($0) } }
+        var helper: pid_t = 0
+        guard posix_spawn(&helper, "/bin/sh", nil, &attributes, &cArguments, environ) == 0 else { return false }
+        status("마이크 복구 · 앱 다시 시작")
+        NSApp.terminate(nil)
+        return true
     }
 
     private func rebuildMicrophone() throws {

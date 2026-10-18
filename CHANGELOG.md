@@ -2,6 +2,11 @@
 
 ## Unreleased — 2026-10-12
 
+- 2026-10-19 (T-261019-012): when the burst after the 30-second cooldown also fails, the app
+  relaunches itself, at most once per ten minutes (receipt `last-microphone-relaunch.json`).
+  After the input device graph changed under a running engine, no in-process rebuild
+  recovered, while a fresh process did at once. A failed microphone start at launch now goes
+  through the same recovery. `scripts/diagnostics/input_device_fault.swift` reproduces the fault.
 - 2026-10-19 (T-261019-007): microphone recovery no longer gives up after three failed
   rebuilds. It shows `마이크 재연결 대기` and tries another three times after each 30-second
   cooldown until the engine runs, so a call that holds the input device for minutes no
