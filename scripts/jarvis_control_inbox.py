@@ -20,6 +20,20 @@ def dictation_target(request):
     return target
 
 
+def microphone_ready(root):
+    """False only when the native app reports its microphone engine stopped.
+
+    JarvisMacOSS writes native-status.json next to the socket; after 마이크 재연결 실패
+    or a manual pause, engine_running is false and no speech can ever be captured.
+    A missing or damaged report belongs to the native app and does not refuse dictation.
+    """
+    try:
+        status = json.loads((Path(root) / 'native-status.json').read_text())
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(status, dict) and status.get('engine_running') is False)
+
+
 # Fixed button intents share the listener's normal dispatch and speech path.
 BUTLER_PHRASES = {'scene_game': '게임할거야', 'scene_sleep': '잘거야',
                   'scene_away': '외출', 'work_start': '시고토스타토',
@@ -90,7 +104,13 @@ def events(stream, root):
                                     and isinstance(created, (float, int))
                                     and 0 <= time.time() - created < 3
                                     and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
-                        client.sendall(b'queued\n' if accepted else b'rejected\n')
+                        reply = b'queued\n' if accepted else b'rejected\n'
+                        if accepted and intent == 'dictation_start' and not microphone_ready(root):
+                            # Arming dictation without a microphone says 말씀하세요 and holds the
+                            # status light for a capture that never comes (2026-10-18 hallway light).
+                            # Refused presses must not consume the duplicate window either.
+                            accepted, reply = False, b'microphone_unavailable\n'
+                        client.sendall(reply)
                     except (OSError, ValueError, AttributeError):
                         accepted = False
                 if accepted:

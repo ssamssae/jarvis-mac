@@ -8,7 +8,7 @@ chunks that are only subtitle boilerplate are dropped (see STT subtitle artifact
 ## Retirement verification (T-261003-013)
 
 - Guided selection: choose an engine, then 아테나 / 볼칸 / 제우스 / 아폴론; unknown or retired names keep the selection prompt open.
-- Preset target: a local trigger may name the target up front (`request_dictation.py --target "아테나 클로드"`), so Jarvis says `말씀하세요.` without the two questions. Only a standalone `node engine` phrase is accepted; anything else is rejected before the listener sees it.
+- Preset target: a local trigger may name the target up front (`request_dictation.py --target "아테나 클로드"`), so Jarvis says `말씀하세요.` without the two questions. Only a standalone `node engine` phrase is accepted; anything else is rejected before the listener sees it. While the native microphone engine is stopped (`native-status.json` `engine_running: false`, e.g. `마이크 재연결 실패` after a call changed the input device), the request is answered `microphone_unavailable` instead of `queued`: Jarvis neither says `말씀하세요.` nor holds the status light for a dictation that cannot capture speech (2026-10-18: the hallway light stayed green until the app was restarted). Check path: `request_dictation.py --target "제우스 코덱스"` with the engine stopped prints `{"status": "microphone_unavailable"}` and the Vibe Key selector shows that reason; restart JarvisMacOSS to recover the microphone.
 - Direct invocation: retired node names never start dictation.
 - Google Home start reads the same local work_mode configuration as voice start.
 - Work end retains its one-use confirmation and supports the remaining three configured targets.

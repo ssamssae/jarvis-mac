@@ -10,10 +10,73 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jarvis_control_inbox import events
+from jarvis_control_inbox import events, microphone_ready
+
+
+def load_dictation_adapter(name='dictation_request'):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parents[1] / 'google-home/request_dictation.py')
+    adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(adapter)
+    return adapter
 
 
 class InboxTests(unittest.TestCase):
+    def test_microphone_ready_only_trusts_an_explicit_stopped_engine(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as d:
+            root = Path(d)
+            status = root / 'native-status.json'
+            self.assertTrue(microphone_ready(root))  # The native app has not reported yet.
+            status.write_text('{broken')
+            self.assertTrue(microphone_ready(root))  # A damaged report is not a stopped microphone.
+            status.write_text(json.dumps({'status': '호출 대기', 'engine_running': True}))
+            self.assertTrue(microphone_ready(root))
+            status.write_text(json.dumps({'status': '마이크 재연결 실패', 'engine_running': False}))
+            self.assertFalse(microphone_ready(root))
+            status.write_text(json.dumps({'status': '일시 정지', 'engine_running': False, 'manual_paused': True}))
+            self.assertFalse(microphone_ready(root))
+
+    def test_dictation_start_is_refused_while_the_native_microphone_is_stopped(self):
+        # 2026-10-18: a Berry call left the native microphone engine stopped for good
+        # (native-status.json engine_running=false, 마이크 재연결 실패). A Vibe Key
+        # dictation_start was still queued, so Jarvis said 말씀하세요 and held the
+        # hallway status light green for a dictation that could never capture speech.
+        with tempfile.TemporaryDirectory(dir='/tmp') as d:
+            root = Path(d)
+            native_status = root / 'native-status.json'
+            r, w = os.pipe()
+            seen = []
+            with os.fdopen(r) as source:
+                worker = threading.Thread(target=lambda: seen.extend(events(source, root)))
+                worker.start()
+                path = root / 'work-end.sock'
+                def send(payload):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                        client.settimeout(2)
+                        client.connect(str(path))
+                        client.sendall((json.dumps(payload, ensure_ascii=False) + '\n').encode())
+                        return client.recv(64)
+                adapter = load_dictation_adapter('dictation_request_microphone_gate')
+                try:
+                    for _ in range(100):
+                        try:
+                            if send({'intent': 'probe'}) == b'rejected\n': break
+                        except (FileNotFoundError, ConnectionRefusedError):
+                            time.sleep(.01)
+                    native_status.write_text(json.dumps({'status': '마이크 재연결 실패', 'engine_running': False}))
+                    # Repeated presses keep getting the microphone answer, not a rate-limit rejection.
+                    self.assertEqual(send({'intent': 'dictation_start', 'created_at': time.time(), 'target': '제우스 코덱스'}), b'microphone_unavailable\n')
+                    self.assertEqual(adapter.request(root, '제우스 코덱스'), 'microphone_unavailable')
+                    # Requests that need no microphone are unaffected.
+                    self.assertEqual(send({'intent': 'work_end', 'created_at': time.time()}), b'queued\n')
+                    native_status.write_text(json.dumps({'status': '호출 대기', 'engine_running': True}))
+                    # The refusals did not consume the 15 s duplicate window.
+                    self.assertEqual(adapter.request(root, '제우스 코덱스'), 'queued')
+                finally:
+                    os.write(w, b'{"wav":"stop"}\n')
+                    os.close(w)
+                    worker.join(5)
+            self.assertEqual([e['intent'] for e in seen if 'intent' in e], ['work_end', 'dictation_start'])
+            self.assertEqual(seen[-1], {'wav': 'stop'})
+
     def test_dictation_start_carries_a_validated_preset_target(self):
         with tempfile.TemporaryDirectory(dir='/tmp') as d:
             root = Path(d)
@@ -84,10 +147,9 @@ class InboxTests(unittest.TestCase):
                     adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(adapter)
                     self.assertTrue(adapter.request(root))
                     self.assertFalse(adapter.request(root))
-                    spec = importlib.util.spec_from_file_location('dictation_request', Path(__file__).resolve().parents[1] / 'google-home/request_dictation.py')
-                    input_adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(input_adapter)
-                    self.assertTrue(input_adapter.request(root))
-                    self.assertFalse(input_adapter.request(root))
+                    input_adapter = load_dictation_adapter()
+                    self.assertEqual(input_adapter.request(root), 'queued')
+                    self.assertEqual(input_adapter.request(root), 'rejected')
                     for intent in ('scene_game', 'scene_sleep', 'scene_away', 'work_start'):
                         payload = {'source':'butler-remote', 'intent':intent, 'created_at':time.time()}
                         self.assertEqual(send(payload), b'queued\n')
