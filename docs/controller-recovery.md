@@ -14,6 +14,12 @@ Malformed, missing, out-of-directory or stale captures are rejected individually
 
 These are bounded last-event files with mode 0600. The native exit file includes EOF, process exit, input delivery failure, startup timeout and spawn failure triggers. A supervisor-initiated termination records the final exit status; it does not prove what originally broke the pipe.
 
+## Microphone recovery
+
+When a device or configuration change stops the audio engine, the app rebuilds it up to three times, one second apart (`마이크 다시 연결 중`). If all three fail, for example while a call still holds the input device, it shows `마이크 재연결 대기` and makes another three attempts after each 30-second cooldown until the engine runs. A running engine resets the budget. A manual pause, quitting and fatal controller errors still stop recovery. Until 2026-10-19 (T-261019-007) the third failure was final (`마이크 재연결 실패`) and only an app restart brought the microphone back; Berry calls on 2026-10-17 and 2026-10-18 left Jarvis deaf for hours that way. While the engine is stopped, `native-status.json` reports `engine_running: false`, so dictation start requests are answered `microphone_unavailable`.
+
+Check path: during the cooldown `native-status.json` shows `status: 마이크 재연결 대기` with `engine_running: false`. Within about 30 seconds after the device is free again it shows `호출 대기`, `engine_running: true`, a higher `microphone_recovery_count` and an updating `meter_updated_wall`. The retry policy is covered by `scripts/tests/test_native_voice_gate.py`; a live forced device failure has not been exercised.
+
 ## Verification path
 
 1. Run `python3 -m unittest discover -s scripts/tests -q`. Provider/device effects are mocked. Native recovery tests use real local fake child processes and pipes without microphone access, Cast playback, API calls or appliance commands.

@@ -51,16 +51,29 @@ for _ in 0..<12 {
 require(!feed(&conversation, Array(repeating: -42.0, count: 50)).contains(true), "question endpoint")
 require(!conversation.isVoiced(db: .nan, seconds: 0.02), "invalid level")
 var recovery = MicrophoneRecovery()
-require(!recovery.shouldAttempt(running: false, authorized: false, paused: false, quitting: false, failed: false), "no permission must not start capture")
-require(!recovery.shouldAttempt(running: false, authorized: true, paused: true, quitting: false, failed: false), "manual pause stays paused")
-require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: true, failed: false), "quit stays quit")
-require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: true), "fatal controller failure stays stopped")
-for _ in 0..<3 {
-    require(recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "device-stop recovery")
+func attempt(_ now: Double, running: Bool = false, paused: Bool = false) -> Bool {
+    recovery.shouldAttempt(running: running, authorized: true, paused: paused, quitting: false, failed: false, now: now)
 }
-require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "retry budget is bounded")
-require(!recovery.shouldAttempt(running: true, authorized: true, paused: false, quitting: false, failed: false), "running engine is untouched")
-require(recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: false), "later independent device change recovers")
+require(!recovery.shouldAttempt(running: false, authorized: false, paused: false, quitting: false, failed: false, now: 0), "no permission must not start capture")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: true, quitting: false, failed: false, now: 0), "manual pause stays paused")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: true, failed: false, now: 0), "quit stays quit")
+require(!recovery.shouldAttempt(running: false, authorized: true, paused: false, quitting: false, failed: true, now: 0), "fatal controller failure stays stopped")
+for second in 0..<3 {
+    require(attempt(Double(second)), "device-stop recovery")
+}
+require(recovery.waiting, "three quick failures wait")
+require(!attempt(3), "quick retries are bounded")
+require(!attempt(31.9), "cooldown is respected")
+// 2026-10-17/18: a Berry call kept the input device busy for minutes, the third quick
+// failure was final, and the microphone stayed off until the app was restarted.
+require(attempt(32), "a new burst starts after the cooldown")
+require(!recovery.waiting, "the new burst has fresh quick attempts")
+require(attempt(33) && attempt(34) && !attempt(35), "the next burst is bounded too")
+require(!attempt(70, paused: true), "manual pause still wins while waiting")
+require(attempt(70), "and the cooldown keeps repeating until the engine runs")
+require(!attempt(71, running: true), "running engine is untouched")
+require(recovery.attempts == 0 && !recovery.waiting, "a running engine resets the budget")
+require(attempt(72), "later independent device change recovers")
 var controller = ControllerRecovery()
 require(controller.nextDelay(at: 10) == 1, "first restart waits 1s")
 controller.ready(at: 11)
