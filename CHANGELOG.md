@@ -2,6 +2,13 @@
 
 ## Unreleased — 2026-10-12
 
+- 2026-10-21 (T-261021-026): local scripts can play a WAV on the configured Nest, or run a
+  helper listed under `config.json` `shuttle.helpers`, through the listener
+  (`scripts/jarvis_shuttle.py`, request source `nest-shuttle` on `work-end.sock`). On macOS 27
+  the local network permission belongs to `JarvisMacOSS.app`: Python started by launchd or
+  tmux got `No route to host`, while the listener kept reaching the Nest. Requests expire,
+  wait behind a running turn, and never change wake, dictation or confirmation state. The
+  installer copies the module and keeps the `shuttle` entry.
 - 2026-10-19 (T-261019-012): when the burst after the 30-second cooldown also fails, the app
   relaunches itself, at most once per ten minutes (receipt `last-microphone-relaunch.json`).
   After the input device graph changed under a running engine, no in-process rebuild

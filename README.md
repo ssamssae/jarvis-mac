@@ -338,6 +338,24 @@ Cast의 수신기/미디어 상태 조회가 일시적으로 실패하면 읽기
 다른 사용자의 재생·중단 신호를 무시하지 않습니다. `last-wake.json`의 `error_code`에는
 허용된 오류 코드만 기록하며, 인식된 주변 대화나 원문 예외를 추가 저장하지 않습니다.
 
+### Local sound shuttle
+
+On macOS 27 the local network permission belongs to the app. A script started by launchd,
+tmux or an AppleScript applet gets `No route to host` for the Nest even while Jarvis reaches
+it. Such a script can hand a WAV to the running listener instead:
+
+```sh
+python3 scripts/jarvis_shuttle.py cast /absolute/path/sound.wav
+```
+
+`cast_wav()` and `run_helper()` in `jarvis_shuttle.py` do the same from Python. The request
+goes through the owner-only `work-end.sock`. The listener plays it with its own Cast connection
+after any running turn and writes the result next to the request. An optional private
+`config.json` entry `shuttle.helpers` maps a name to a fixed argument array. A request names
+the helper and passes at most 1 KB of JSON on its stdin, so the helper and its children run
+under the app's permission. Requests expire (300 s at most), are never replayed, and leave the
+wake, dictation and confirmation state unchanged.
+
 ## Controller fault recovery
 
 Unexpected controller exits now trigger bounded automatic recovery without replaying previous commands. See [recovery behavior and verification](docs/controller-recovery.md).

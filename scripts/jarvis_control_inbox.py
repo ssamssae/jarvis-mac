@@ -8,6 +8,7 @@ import socket
 import time
 
 from jarvis_dictation import START
+from jarvis_shuttle import SOURCE as SHUTTLE_SOURCE, validate_request as shuttle_request
 
 
 def dictation_target(request):
@@ -67,7 +68,7 @@ def events(stream, root):
     try:
         server.bind(str(path))
         path.chmod(0o600)
-        server.listen(2)
+        server.listen(8)
         while True:
             ready, _, _ = select.select([fd, server], [], [])
             # Already captured speech is always processed before a new prompt.
@@ -83,37 +84,50 @@ def events(stream, root):
                         yield event
             if server in ready:
                 accepted = False
+                shuttle_event = None
                 client, _ = server.accept()
                 with client:
                     client.settimeout(.5)
                     try:
                         with client.makefile('rb') as reader:
-                            message = reader.readline(256)
+                            message = reader.readline(2048)
                         request = json.loads(message)
                         created = request.get('created_at')
                         intent = request.get('intent')
                         source = request.get('source', 'google-home-matter')
-                        try:
-                            target = dictation_target(request) if intent == 'dictation_start' else None
-                            target_ok = True
-                        except ValueError:
-                            target, target_ok = None, False
-                        allowed = (isinstance(intent, str) and intent in BUTLER_PHRASES if source == 'butler-remote'
-                                   else source == 'google-home-matter' and intent in ('work_end', 'dictation_start'))
-                        accepted = (allowed and target_ok
-                                    and isinstance(created, (float, int))
-                                    and 0 <= time.time() - created < 3
-                                    and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
-                        reply = b'queued\n' if accepted else b'rejected\n'
-                        if accepted and intent == 'dictation_start' and not microphone_ready(root):
-                            # Arming dictation without a microphone says 말씀하세요 and holds the
-                            # status light for a capture that never comes (2026-10-18 hallway light).
-                            # Refused presses must not consume the duplicate window either.
-                            accepted, reply = False, b'microphone_unavailable\n'
-                        client.sendall(reply)
+                        if source == SHUTTLE_SOURCE:
+                            # Another local script's sound or helper (jarvis_shuttle). Those may
+                            # follow each other within seconds, so no duplicate window applies.
+                            try:
+                                shuttle_event = shuttle_request(request, root)
+                            except ValueError:
+                                shuttle_event = None
+                            accepted = shuttle_event is not None
+                            client.sendall(b'queued\n' if accepted else b'rejected\n')
+                        else:
+                            try:
+                                target = dictation_target(request) if intent == 'dictation_start' else None
+                                target_ok = True
+                            except ValueError:
+                                target, target_ok = None, False
+                            allowed = (isinstance(intent, str) and intent in BUTLER_PHRASES if source == 'butler-remote'
+                                       else source == 'google-home-matter' and intent in ('work_end', 'dictation_start'))
+                            accepted = (allowed and target_ok
+                                        and isinstance(created, (float, int))
+                                        and 0 <= time.time() - created < 3
+                                        and time.monotonic() - last_request.get(intent, -float('inf')) >= 15)
+                            reply = b'queued\n' if accepted else b'rejected\n'
+                            if accepted and intent == 'dictation_start' and not microphone_ready(root):
+                                # Arming dictation without a microphone says 말씀하세요 and holds the
+                                # status light for a capture that never comes (2026-10-18 hallway light).
+                                # Refused presses must not consume the duplicate window either.
+                                accepted, reply = False, b'microphone_unavailable\n'
+                            client.sendall(reply)
                     except (OSError, ValueError, AttributeError):
                         accepted = False
-                if accepted:
+                if accepted and shuttle_event is not None:
+                    yield shuttle_event
+                elif accepted:
                     last_request[intent] = time.monotonic()
                     now = time.time()
                     event = {'source': source, 'intent': intent,
