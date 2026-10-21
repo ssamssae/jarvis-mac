@@ -22,6 +22,7 @@ import jarvis_work_mode
 import jarvis_work_end
 from jarvis_control_inbox import BUTLER_PHRASES, events as control_events
 from jarvis_dictation import Dictation, deliver
+import jarvis_shuttle
 from whisper_cpp_worker import worker_command
 
 WAKE = re.compile(r"^\s*(?:(?:헤이|hey)\s*)?(?:자비스|자르비스|jarvis)(?:야)?(?:[\s,.!?:，。！？]+|$)", re.I)
@@ -250,6 +251,11 @@ def main():
               startup_prepare_s=cast_session.startup_prepare_s,
               startup_prepare_error=cast_session.startup_prepare_error)
         for event in control_events(sys.stdin, root):
+            if event.get('source') == jarvis_shuttle.SOURCE:
+                # Another local script's sound or helper rides this app's network permission.
+                # Jarvis' own wake, dictation and confirmation state stay untouched.
+                jarvis_shuttle.serve(event, root, config, cast_session)
+                continue
             japanese_command = False
             butler_phrase = BUTLER_PHRASES.get(event.get('intent')) if event.get('source') == 'butler-remote' else None
             external_scene = bool(butler_phrase and event['intent'].startswith('scene_'))
