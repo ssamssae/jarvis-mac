@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,6 +40,35 @@ class VoiceResolutionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'voice_cannot_be_blank'):
                     voice.resolve_say_voice(blank)
             run.assert_not_called()
+
+
+class SystemVoiceTests(unittest.TestCase):
+    """T-261024-037: "system" = Berry's voice (macOS system voice, Siri 민지 on Athena), reachable only as `say` without -v."""
+
+    def test_system_is_accepted_without_listing_installed_voices(self):
+        with patch.object(voice.subprocess, 'run') as run:
+            self.assertEqual(voice.resolve_say_voice('system'), 'system')
+            run.assert_not_called()
+
+    def test_command_drops_v_only_for_system(self):
+        self.assertEqual(voice.say_command('system', '-o', 'a.wav', '안녕'), ['say', '-o', 'a.wav', '안녕'])
+        self.assertEqual(voice.say_command('Yuna', '-o', 'a.wav', '안녕'), ['say', '-v', 'Yuna', '-o', 'a.wav', '안녕'])
+
+    def test_sentence_synthesis_uses_the_system_voice_when_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = voice.SpeechQueue(directory, voice='system')
+            try:
+                process = unittest.mock.Mock()
+                process.wait.return_value = 0
+                process.poll.return_value = 0
+                with patch.object(voice.subprocess, 'Popen', return_value=process) as popen:
+                    queue.synthesize(0, '대종님, 베리예요.')
+                argv = popen.call_args.args[0]
+                self.assertEqual(argv[0], 'say')
+                self.assertNotIn('-v', argv)
+                self.assertEqual(argv[-1], '대종님, 베리예요.')
+            finally:
+                queue.queue.put(None)
 
 
 class InstallerVoiceTests(unittest.TestCase):
