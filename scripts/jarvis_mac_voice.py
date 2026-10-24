@@ -36,12 +36,22 @@ ABSTAIN = "확인할 근거가 없어 정확히 답하기 어려워요."
 NASA_SKY = "https://spaceplace.nasa.gov/blue-sky/en/"
 
 
+# T-261024-037 (owner: 「자비스도 바꿔」 — Berry's voice): "system" = the macOS system voice, i.e. `say` without -v.
+# Berry speaks through Live Speech whose Korean voice is "system" (Spoken Content: Siri 민지 on Athena); a Siri voice has
+# no `say -v` name, so this value is the only way to reach it.
+SYSTEM_VOICE = "system"
+
+
+def say_command(voice, *rest):
+    return ["say", *([] if voice == SYSTEM_VOICE else ["-v", voice]), *rest]
+
+
 def resolve_say_voice(requested=None, existing=None):
-    """Preserve an existing choice; explicitly requested names must be installed."""
+    """Preserve an existing choice; explicitly requested names must be installed (or "system")."""
     selected = requested if requested is not None else (existing if existing is not None else "Yuna")
     if not isinstance(selected, str) or not selected.strip():
         raise ValueError("voice_cannot_be_blank")
-    if requested is not None:
+    if requested is not None and requested != SYSTEM_VOICE:
         result = subprocess.run(["/usr/bin/say", "-v", "?"], capture_output=True,
                                 text=True, check=True, timeout=10)
         # A voice name can include spaces, parentheses, Unicode, and locale names.
@@ -557,8 +567,8 @@ class SpeechQueue:
         path = self.directory / f"{self.prefix}-sentence-{number}.wav"; start = time.monotonic()
         with self.process_lock:
             if self.cancelled.is_set(): raise RuntimeError("speech_cancelled")
-            process = subprocess.Popen(["say", "-v", self.voice, "-o", str(path), "--file-format=WAVE",
-                        "--data-format=LEI16@24000", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process = subprocess.Popen(say_command(self.voice, "-o", str(path), "--file-format=WAVE",
+                        "--data-format=LEI16@24000", text), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.processes.add(process)
         try:
             if process.wait(timeout=25) != 0: raise RuntimeError("speech_synthesis_failed")
