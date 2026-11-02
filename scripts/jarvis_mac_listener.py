@@ -103,6 +103,19 @@ class WakeGate:
         return 'ignored', ''
 
 
+def dictation_answer(status):
+    """Spoken receipt for one dictation delivery.
+
+    'queued' = the busy Claude session accepted the prompt into its queue but has not consumed
+    it yet (T-261016-045). It is not a failure, so it must not sound like one; the saved copy
+    stays because consumption is still unconfirmed."""
+    if status == 'submitted':
+        return '전송했습니다.'
+    if status == 'queued':
+        return '접수했어요. 지금 하던 일이 끝나면 이어서 처리해요.'
+    return '전송을 확인하지 못했어요. 받아쓴 내용은 보관했습니다.'
+
+
 def atomic_json(path, value):
     tmp = path.with_suffix('.tmp')
     tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2))
@@ -335,9 +348,7 @@ def main():
                                     'engine':request['engine'], **result})
                         if result['status'] == 'submitted':
                             pending_path.unlink(missing_ok=True)
-                            answer = '전송했습니다.'
-                        else:
-                            answer = '전송을 확인하지 못했어요. 받아쓴 내용은 보관했습니다.'
+                        answer = dictation_answer(result['status'])
                     elif action == 'cancelled':
                         (root/'dictation-draft.json').unlink(missing_ok=True)
                         answer = '받아쓰기를 취소했습니다.'

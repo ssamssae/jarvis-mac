@@ -47,6 +47,21 @@ def transcript_mark(path):
         return path, ''
 
 
+def queued_command_prompt(value):
+    """Prompt text of a Claude busy-turn landing (type=attachment, attachment.type=queued_command).
+
+    A prompt pasted while Claude is mid-turn reaches the transcript as this attachment, not as a
+    user record, once the turn absorbs it (T-261016-045). Task notifications share the type but
+    carry commandMode=task-notification, so they never count as a dictated prompt."""
+    attachment = value.get('attachment') if value.get('type') == 'attachment' else None
+    if not isinstance(attachment, dict) or attachment.get('type') != 'queued_command':
+        return ''
+    if attachment.get('commandMode') not in (None, 'prompt'):
+        return ''
+    prompt = attachment.get('prompt')
+    return prompt if isinstance(prompt, str) else ''
+
+
 def user_text_count(data, text):
     def contains_user(value):
         if isinstance(value, dict):
@@ -57,6 +72,8 @@ def user_text_count(data, text):
                     if isinstance(obj, list): return sum((strings(v) for v in obj), [])
                     return []
                 if any(text in part for part in strings(value)): return True
+            if text in queued_command_prompt(value):
+                return True
             return any(contains_user(v) for v in value.values())
         if isinstance(value, list): return any(contains_user(v) for v in value)
         return False
@@ -138,6 +155,21 @@ def user_text_seen_tail(mark, text):
     return 'unverified'
 
 
+QUEUE_HINT = 'Press up to edit queued messages'
+
+
+def queued_in_pane(screen, text, hint=QUEUE_HINT):
+    """True when Claude's TUI still holds this exact prompt in its busy-turn queue.
+
+    The queue hint alone is not enough: an older or different queued input must never be
+    mistaken for this request, so the prompt's opening characters must be on screen as well.
+    Whitespace is dropped on both sides because the pane wraps long Korean lines anywhere."""
+    if not screen or hint not in screen:
+        return False
+    snippet = re.sub(r'\s+', '', text)[:16]
+    return bool(snippet) and snippet in re.sub(r'\s+', '', screen)
+
+
 def local_submit(root, request, probe=False):
     engine = request['engine']
     bridge = load_bridge(root, engine)
@@ -199,7 +231,17 @@ def local_submit(root, request, probe=False):
                 return 'ready'
             mark = transcript_tail_mark(claude_transcript_path(bridge, config, transport))
             transport._paste_prompt_unlocked(text)
-        return user_text_seen_tail(mark, text)
+        status = user_text_seen_tail(mark, text)
+        if status == 'unverified':
+            # A busy turn absorbs queued input only when it reaches a boundary (29 s on 10/16).
+            # Say "queued" only when the pane shows this prompt waiting; never resend it.
+            try:
+                screen = transport.capture_pane()
+            except Exception:
+                screen = ''
+            if queued_in_pane(screen, text, getattr(bridge, 'SEND_NOW_QUEUE_HINT', QUEUE_HINT)):
+                return 'queued'
+        return status
     if engine == 'cursor':
         with bridge.composer_lock():
             screen = bridge._tui_capture_pane()

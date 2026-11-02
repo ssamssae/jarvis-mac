@@ -140,3 +140,15 @@ class ListenerDictationTest(unittest.TestCase):
                 self.assertNotIn(('어디로 연결할까요?',), [call.args for call in speech.submit.call_args_list])
                 self.assertNotIn(('어떤 노드인가요?',), [call.args for call in speech.submit.call_args_list])
             self.assertEqual(list((root/'pending-dictations').glob('*.json')), [])
+
+
+class DictationAnswerTest(unittest.TestCase):
+    """T-261016-045: a queued prompt must not be spoken as a delivery failure."""
+
+    def test_each_status_gets_its_own_answer(self):
+        self.assertEqual(listener.dictation_answer('submitted'), '전송했습니다.')
+        queued = listener.dictation_answer('queued')
+        self.assertIn('접수', queued)
+        self.assertNotIn('확인하지 못', queued)
+        for status in ('unverified', 'unknown', 'busy', 'composer_occupied'):
+            self.assertIn('확인하지 못', listener.dictation_answer(status))

@@ -215,3 +215,15 @@ Verified on Athena, 2026-09-26 KST: `python3 -m unittest discover -s scripts/tes
 passed 200 tests, including `test_control_inbox.py`. Fixtures do not send messages,
 play audio or control appliances. Live Japanese work-end speech, playback and
 microphone recovery require approved installation and a separate voice trial.
+
+## Busy Claude turns: `queued` (T-261016-045)
+
+A prompt pasted while Claude is mid-turn waits in Claude's own queue and reaches
+the transcript only when the turn absorbs it, as `type=attachment` with
+`attachment.type=queued_command` and the text in `attachment.prompt` (10/16 measured
+29.5 s, longer than the 20 s receipt window). The receipt counts that landing as
+`submitted`. When the window ends first, the adapter reads the pane once: if the
+queue hint (`Press up to edit queued messages`) and this prompt's opening characters
+are both on screen, it returns `queued`; any other queued text stays `unverified`.
+The listener says 「접수했어요. 지금 하던 일이 끝나면 이어서 처리해요.」 for `queued`
+and keeps the saved copy, because consumption is still unconfirmed. Nothing is resent.
