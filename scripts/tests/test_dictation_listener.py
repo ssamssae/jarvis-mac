@@ -18,6 +18,11 @@ class ListenerDictationTest(unittest.TestCase):
         self.check_flow([None, '승인', '', '엔터'], ['dictating', 'dictating', 'dictating'],
                         external_target='아테나 클로드', expected_engine='claude')
 
+    def test_queued_delivery_keeps_the_saved_copy_and_says_accepted(self):
+        # T-261016-045: a busy Claude turn queued the prompt; consumption is unconfirmed, so the copy stays.
+        self.check_flow([None, '승인', '', '엔터'], ['dictating', 'dictating', 'dictating'],
+                        external_target='아테나 클로드', expected_engine='claude', delivery_status='queued')
+
     def test_preset_target_drops_stt_artifact_before_body(self):
         self.check_flow([None, '-끝-', '승인', '', '엔터'], ['dictating', 'dictating', 'dictating', 'dictating'],
                         external_target='아테나 클로드', expected_engine='claude')
@@ -58,7 +63,7 @@ class ListenerDictationTest(unittest.TestCase):
 
     def check_flow(self, transcripts, expected_states, guided=False, prompt_timeout=False,
                    playback_started=True, expected_delivery=True, custom_worker=True,
-                   external_target=None, expected_engine='codex'):
+                   external_target=None, expected_engine='codex', delivery_status='submitted'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'config.json').write_text(json.dumps({'cast_name':'test', 'stt_worker':'test',
@@ -80,7 +85,7 @@ class ListenerDictationTest(unittest.TestCase):
             final_states = []
             def deliver(config, request):
                 requests.append(request)
-                return {'status':'submitted'}
+                return {'status':delivery_status}
             def events(*args):
                 for index in range(len(transcripts)):
                     audio = root/'audio'/f'{index}.wav'
@@ -139,7 +144,12 @@ class ListenerDictationTest(unittest.TestCase):
             if external_target:
                 self.assertNotIn(('어디로 연결할까요?',), [call.args for call in speech.submit.call_args_list])
                 self.assertNotIn(('어떤 노드인가요?',), [call.args for call in speech.submit.call_args_list])
-            self.assertEqual(list((root/'pending-dictations').glob('*.json')), [])
+            self.assertIn((listener.dictation_answer(delivery_status),), [call.args for call in speech.submit.call_args_list])
+            saved = list((root/'pending-dictations').glob('*.json'))
+            if delivery_status == 'submitted':
+                self.assertEqual(saved, [])
+            else:
+                self.assertEqual([json.loads(path.read_text())['text'] for path in saved], ['승인'])
 
 
 class DictationAnswerTest(unittest.TestCase):

@@ -234,73 +234,112 @@ class GrokVoicePrefixTest(unittest.TestCase):
 
 
 class ClaudeBusyTurnTest(unittest.TestCase):
-    """T-261016-045: a prompt pasted into a busy Claude turn is queued, not lost."""
+    """T-261016-045: a prompt pasted into a busy Claude turn is reported queued, not lost.
 
-    def bridge_with_screens(self, screens, transcript, pasted):
+    The receipt comes only from records Claude appends to this session's JSONL after the paste."""
+
+    TEXT = '자비스 대기열 실측 문장입니다 하나 둘 셋'
+    # Recorded 2026-11-03 on athena, Claude Code 2.1.316, prompt pasted during a running Bash call.
+    # Fields trimmed to what the receipt reads; order kept.
+    ENQUEUE = {'type':'queue-operation', 'operation':'enqueue', 'timestamp':'2026-11-03T00:45:59.936Z',
+               'content':TEXT}
+    ABSORBED = {'type':'queue-operation', 'operation':'remove', 'timestamp':'2026-11-03T00:46:07.090Z',
+                'content':TEXT, 'reason':'absorbed_mid_turn'}
+    LANDING = {'type':'attachment', 'attachment':{'type':'queued_command', 'prompt':TEXT, 'commandMode':'prompt',
+                                                  'origin':{'kind':'human'}, 'humanTurn':True}}
+
+    def run_submit(self, arrivals, text=TEXT, before=()):
+        """Paste once; arrivals[i] is appended during the i-th receipt poll sleep.
+
+        monotonic() jumps 8 s per call, so the 20 s window polls at 8 s and 16 s, then one read follows."""
         import contextlib
-        from types import SimpleNamespace
-        frames = iter(screens)
-        transport = SimpleNamespace(composer_lock=contextlib.nullcontext, capture_pane=lambda: next(frames),
-                                    pane_pid=lambda: 1, _paste_prompt_unlocked=pasted.append)
-        binder = SimpleNamespace(resolve=lambda: SimpleNamespace(transcript_path=transcript))
-        return SimpleNamespace(Config=SimpleNamespace(from_env=lambda: SimpleNamespace()),
-                               TmuxClaudeTransport=lambda config: transport, SessionBinder=lambda config, repl: binder,
-                               parse_pane_choice=lambda s: None, parse_ask_question=lambda s: None,
-                               composer_residual_text=lambda s: '',
-                               SEND_NOW_QUEUE_HINT='Press up to edit queued messages')
-
-    def run_submit(self, screens, text, arrive=None):
         import itertools
+        from types import SimpleNamespace
         from unittest.mock import patch
         import jarvis_session_input as adapter
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory)/'session.jsonl'
-            transcript.write_text('')
+            transcript.write_text(''.join(json.dumps(r, ensure_ascii=False)+'\n' for r in before))
             pasted = []
+            transport = SimpleNamespace(composer_lock=contextlib.nullcontext, capture_pane=lambda: '> ',
+                                        _paste_prompt_unlocked=pasted.append)
+            binder = SimpleNamespace(resolve=lambda: SimpleNamespace(transcript_path=transcript))
+            bridge = SimpleNamespace(Config=SimpleNamespace(from_env=lambda: SimpleNamespace()),
+                                     TmuxClaudeTransport=lambda config: transport,
+                                     SessionBinder=lambda config, repl: binder,
+                                     parse_pane_choice=lambda s: None, parse_ask_question=lambda s: None,
+                                     composer_residual_text=lambda s: '')
+            pending = list(arrivals)
+            sleeps = []
+            def sleep(seconds):
+                sleeps.append(seconds)
+                batch = pending.pop(0) if pending else []
+                with transcript.open('a') as handle:
+                    for record in batch:
+                        handle.write(json.dumps(record, ensure_ascii=False)+'\n')
             req = dict(id='123', node='mac', engine='claude', origin='microphone', text=text)
-            bridge = self.bridge_with_screens(screens, transcript, pasted)
-            def sleep(_seconds):
-                if arrive:
-                    with transcript.open('a') as handle:
-                        handle.write(json.dumps(arrive, ensure_ascii=False)+'\n')
-            # Each monotonic() call jumps 8 s: the 20 s receipt window gets two polls, then closes.
             with patch.object(adapter, 'load_bridge', return_value=bridge), \
                  patch.object(adapter.time, 'monotonic', side_effect=itertools.count(0, 8)), \
                  patch.object(adapter.time, 'sleep', sleep):
                 status = adapter.local_submit(Path(directory), req)
-            return status, pasted
+            self.assertEqual(pasted, [text])  # pasted once, never resent
+            return status, sleeps
 
-    def test_prompt_waiting_in_the_busy_queue_is_reported_queued_once(self):
-        queued = ('✻ Working… (2m 03s · esc to interrupt)\n'
-                  '  ❯ 살아있음 시험 결과를\n    알려줘\n'
-                  '  Press up to edit queued messages')
-        status, pasted = self.run_submit(['> ', queued], '살아있음 시험 결과를 알려줘')
+    def test_enqueued_prompt_is_reported_queued(self):
+        status, _ = self.run_submit([[self.ENQUEUE]])
         self.assertEqual(status, 'queued')
-        self.assertEqual(pasted, ['살아있음 시험 결과를 알려줘'])  # pasted once, never resent
 
-    def test_a_different_queued_prompt_is_not_claimed(self):
-        other = ('  ❯ 어제 보낸 다른 요청\n'
-                 '  Press up to edit queued messages')
-        status, pasted = self.run_submit(['> ', other], '살아있음 시험 결과를 알려줘')
+    def test_absorbed_landing_is_reported_submitted(self):
+        status, _ = self.run_submit([[self.ENQUEUE], [self.ABSORBED, self.LANDING]])
+        self.assertEqual(status, 'submitted')
+
+    def test_landing_after_the_last_poll_is_read_once_more(self):
+        # The landing arrives during the last sleep of the window (about 19.9 s): no poll sees it,
+        # the read after the window does, and no extra wait is added after the window.
+        status, sleeps = self.run_submit([[self.ENQUEUE], [self.LANDING]])
+        self.assertEqual(status, 'submitted')
+        self.assertEqual(len(sleeps), 2)
+
+    def test_a_different_prompt_with_the_same_start_is_not_claimed(self):
+        other = self.TEXT + ' 그리고 다른 요청'
+        self.assertEqual(other[:16], self.TEXT[:16])
+        status, _ = self.run_submit([[dict(self.ENQUEUE, content=other)],
+                                     [dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt=other))]])
         self.assertEqual(status, 'unverified')
-        self.assertEqual(len(pasted), 1)
 
-    def test_queue_hint_without_this_prompt_or_no_hint_stays_unverified(self):
-        from jarvis_session_input import queued_in_pane
-        self.assertFalse(queued_in_pane('  ❯ 살아있음 시험 결과를 알려줘', '살아있음 시험 결과를 알려줘'))
-        self.assertFalse(queued_in_pane('', '본문'))
-        self.assertTrue(queued_in_pane('❯ 살아있\n  음 시험 결과\nPress up to edit queued messages',
-                                       '살아있음 시험 결과'))
+    def test_a_longer_prompt_containing_this_one_is_not_claimed(self):
+        landing = dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt='승인하지 마'))
+        status, _ = self.run_submit([[dict(self.ENQUEUE, content='승인하지 마')], [landing]], text='승인')
+        self.assertEqual(status, 'unverified')
 
-    def test_queued_command_landing_counts_as_delivery(self):
-        landing = {'type':'attachment', 'attachment':{'type':'queued_command', 'commandMode':'prompt',
-                                                     'prompt':'살아있음 시험 결과를 알려줘'}}
-        status, _ = self.run_submit(['> ', AssertionError('pane must not be read after delivery')],
-                                    '살아있음 시험 결과를 알려줘', arrive=landing)
+    def test_an_older_identical_queued_prompt_is_not_claimed(self):
+        # Records written before the paste are outside the tail; nothing new arrives for this paste.
+        status, _ = self.run_submit([], before=[self.ENQUEUE])
+        self.assertEqual(status, 'unverified')
+
+    def test_prompt_removed_from_the_queue_undelivered_is_not_queued(self):
+        dropped = dict(self.ABSORBED, reason='discarded')
+        status, _ = self.run_submit([[self.ENQUEUE], [dropped]])
+        self.assertEqual(status, 'unverified')
+
+    def test_nested_landing_and_tool_result_are_not_the_prompt(self):
+        nested = {'type':'assistant', 'message':{'role':'assistant', 'content':[
+            {'type':'tool_use', 'name':'Write', 'input':{'example':self.LANDING, 'queue':self.ENQUEUE}}]}}
+        # A command printing exactly the dictated words (cat note.txt) is still not the prompt.
+        tool_result = {'type':'user', 'message':{'role':'user', 'content':[
+            {'type':'tool_result', 'tool_use_id':'t1', 'content':self.TEXT}]}}
+        injected = {'type':'user', 'isMeta':True, 'message':{'role':'user', 'content':self.TEXT}}
+        status, _ = self.run_submit([[nested], [tool_result, injected]])
+        self.assertEqual(status, 'unverified')
+
+    def test_wrapped_paste_and_spacing_still_match(self):
+        wrapped = {'type':'user', 'message':{'role':'user',
+                   'content':'\n\n<pasted_content id="a8ec">\n' + self.TEXT.replace(' ', '\n') + '\n</pasted_content id="a8ec">\n'}}
+        status, _ = self.run_submit([[wrapped]])
         self.assertEqual(status, 'submitted')
 
     def test_task_notification_landing_is_not_a_dictated_prompt(self):
-        from jarvis_session_input import user_text_count
+        from jarvis_session_input import claude_receipt
         note = {'type':'attachment', 'attachment':{'type':'queued_command', 'commandMode':'task-notification',
                                                   'prompt':'본문'}}
-        self.assertEqual(user_text_count(json.dumps(note, ensure_ascii=False), '본문'), 0)
+        self.assertEqual(claude_receipt(json.dumps(note, ensure_ascii=False), '본문'), '')

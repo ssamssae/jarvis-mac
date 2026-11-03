@@ -218,12 +218,29 @@ microphone recovery require approved installation and a separate voice trial.
 
 ## Busy Claude turns: `queued` (T-261016-045)
 
-A prompt pasted while Claude is mid-turn waits in Claude's own queue and reaches
-the transcript only when the turn absorbs it, as `type=attachment` with
-`attachment.type=queued_command` and the text in `attachment.prompt` (10/16 measured
-29.5 s, longer than the 20 s receipt window). The receipt counts that landing as
-`submitted`. When the window ends first, the adapter reads the pane once: if the
-queue hint (`Press up to edit queued messages`) and this prompt's opening characters
-are both on screen, it returns `queued`; any other queued text stays `unverified`.
-The listener says 「접수했어요. 지금 하던 일이 끝나면 이어서 처리해요.」 for `queued`
-and keeps the saved copy, because consumption is still unconfirmed. Nothing is resent.
+A prompt pasted while Claude is mid-turn waits in Claude's own queue. The adapter
+reads only the records Claude appends to this session's JSONL after the paste:
+
+| Record | Meaning | Receipt |
+| --- | --- | --- |
+| `type=user` prompt, or `type=attachment` with `attachment.type=queued_command` (`commandMode` prompt) | the prompt reached the conversation | `submitted` |
+| `type=queue-operation`, `operation=enqueue`, `content`=prompt | the prompt is waiting in the queue | `queued` |
+| `type=queue-operation`, `operation=remove`, `reason=absorbed_mid_turn` | the turn took it; the landing follows | `queued` until the landing is read |
+| `type=queue-operation`, `operation=remove`, any other reason | dropped from the queue undelivered | `unverified` |
+
+Matching is whole-prompt equality, ignoring whitespace and the
+`<pasted_content id="…">…</pasted_content id="…">` wrapper that Claude Code adds to
+a multi-line paste. 「승인」 does not match 「승인하지 마」. Only top-level records
+count: tool results, `isMeta` injections and objects nested inside another record
+never do. After the 20 s window the adapter reads the tail once more, so a landing
+at 19.9 s is `submitted`, not `unverified`. The pane is not read for the receipt.
+
+Evidence: 2026-10-16 macmini (enqueue, then remove `absorbed_mid_turn` and the
+landing 29.5 s later) and 2026-11-03 athena, Claude Code 2.1.316, throwaway
+session (enqueue 1 s after Enter, absorbed 7 s later). The listener says
+「접수했어요. 지금 하던 일이 끝나면 이어서 처리해요.」 for `queued` and keeps the
+saved copy, because consumption is still unconfirmed. Nothing is resent.
+
+Known limit: if an identical prompt was already waiting in the queue before this
+paste and the turn takes it inside the window, that landing reads as `submitted`.
+The new paste then still waits in the queue, so it is delivered, not lost.
