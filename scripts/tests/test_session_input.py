@@ -275,8 +275,8 @@ class ClaudeBusyTurnTest(unittest.TestCase):
                 sleeps.append(seconds)
                 batch = pending.pop(0) if pending else []
                 with transcript.open('a') as handle:
-                    for record in batch:
-                        handle.write(json.dumps(record, ensure_ascii=False)+'\n')
+                    for record in batch:  # a str is written as is (a torn or foreign line)
+                        handle.write((record if isinstance(record, str) else json.dumps(record, ensure_ascii=False))+'\n')
             req = dict(id='123', node='mac', engine='claude', origin='microphone', text=text)
             with patch.object(adapter, 'load_bridge', return_value=bridge), \
                  patch.object(adapter.time, 'monotonic', side_effect=itertools.count(0, 8)), \
@@ -318,9 +318,37 @@ class ClaudeBusyTurnTest(unittest.TestCase):
         self.assertEqual(status, 'unverified')
 
     def test_prompt_removed_from_the_queue_undelivered_is_not_queued(self):
-        dropped = dict(self.ABSORBED, reason='discarded')
+        dropped = dict(self.ABSORBED, reason='cleared_on_cancel')  # Esc empties the queue
         status, _ = self.run_submit([[self.ENQUEUE], [dropped]])
         self.assertEqual(status, 'unverified')
+
+    def test_handed_on_but_not_landed_stays_queued(self):
+        for reason in ('absorbed_mid_turn', 'delivered_to_agent'):
+            with self.subTest(reason=reason):
+                status, _ = self.run_submit([[self.ENQUEUE], [dict(self.ABSORBED, reason=reason)]])
+                self.assertEqual(status, 'queued')
+
+    def test_wrapped_queue_record_is_queued(self):
+        wrapped = dict(self.ENQUEUE, content='<pasted_content id="a8ec">\n' + self.TEXT + '\n</pasted_content id="a8ec">')
+        status, _ = self.run_submit([[wrapped]])
+        self.assertEqual(status, 'queued')
+
+    def test_prompt_split_over_text_blocks_is_submitted(self):
+        half = len(self.TEXT) // 2
+        record = {'type':'user', 'message':{'role':'user', 'content':[
+            {'type':'text', 'text':self.TEXT[:half]}, {'type':'text', 'text':self.TEXT[half:]}]}}
+        status, _ = self.run_submit([[record]])
+        self.assertEqual(status, 'submitted')
+
+    def test_a_torn_line_does_not_hide_the_landing(self):
+        status, _ = self.run_submit([['{"type":"user","message":{"role":', self.LANDING]])
+        self.assertEqual(status, 'submitted')
+
+    def test_line_separator_inside_the_prompt_keeps_the_record_whole(self):
+        text = '첫 줄\u2028둘째 줄\u0085셋째 줄'
+        landing = dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt=text))
+        status, _ = self.run_submit([[landing]], text=text)
+        self.assertEqual(status, 'submitted')
 
     def test_nested_landing_and_tool_result_are_not_the_prompt(self):
         nested = {'type':'assistant', 'message':{'role':'assistant', 'content':[

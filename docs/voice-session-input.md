@@ -105,8 +105,9 @@ The adapter reuses existing bridge transports and the Grok local FIFO. It does
 not start new sessions, clear composers, change models, or answer approval menus.
 Occupied or unrecognized composers are preserved. A submitted receipt requires
 the dictated text in a new user event in the target transcript. Ambiguous sends
-are never retried automatically. Private drafts and failed requests remain under
-the listener state directory; receiver UUID receipts suppress duplicate sends.
+are never retried automatically. Private drafts, failed requests and `queued`
+requests (consumption unconfirmed) remain under the listener state directory;
+receiver UUID receipts suppress duplicate sends.
 
 The optional adapter requires a compatible local `claude-automations/scripts`
 installation. Other deployments can supply their own trusted stdin adapter.
@@ -225,8 +226,8 @@ reads only the records Claude appends to this session's JSONL after the paste:
 | --- | --- | --- |
 | `type=user` prompt, or `type=attachment` with `attachment.type=queued_command` (`commandMode` prompt) | the prompt reached the conversation | `submitted` |
 | `type=queue-operation`, `operation=enqueue`, `content`=prompt | the prompt is waiting in the queue | `queued` |
-| `type=queue-operation`, `operation=remove`, `reason=absorbed_mid_turn` | the turn took it; the landing follows | `queued` until the landing is read |
-| `type=queue-operation`, `operation=remove`, any other reason | dropped from the queue undelivered | `unverified` |
+| `type=queue-operation`, `operation=remove`, `reason=absorbed_*` or `delivered_*` | the turn (or an agent) took it; the landing follows | `queued` until the landing is read |
+| `type=queue-operation`, `operation=remove`, any other reason (e.g. `cleared_on_cancel`) | dropped from the queue undelivered | `unverified` |
 
 Matching is whole-prompt equality, ignoring whitespace and the
 `<pasted_content id="…">…</pasted_content id="…">` wrapper that Claude Code adds to
@@ -241,6 +242,12 @@ session (enqueue 1 s after Enter, absorbed 7 s later). The listener says
 「접수했어요. 지금 하던 일이 끝나면 이어서 처리해요.」 for `queued` and keeps the
 saved copy, because consumption is still unconfirmed. Nothing is resent.
 
+Records are split on `\n` only, because Claude writes U+2028, U+2029 and U+0085
+unescaped inside JSON strings.
+
 Known limit: if an identical prompt was already waiting in the queue before this
-paste and the turn takes it inside the window, that landing reads as `submitted`.
-The new paste then still waits in the queue, so it is delivered, not lost.
+paste and the turn takes it inside the window, that landing reads as `submitted`
+and the listener deletes its saved copy. The new paste is still only queued: if
+the queue is then cleared (Esc, `cleared_on_cancel`), that text is lost without
+a saved copy. This needs the same sentence dictated twice while the first is
+still queued.

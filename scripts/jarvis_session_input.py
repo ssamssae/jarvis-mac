@@ -130,10 +130,14 @@ def claude_receipt(data, text):
     - queued: Claude's own queue record holds it. Claude Code writes
       {"type":"queue-operation","operation":"enqueue","content":<prompt>} the moment a prompt typed during a
       busy turn joins its queue, then "remove" with reason absorbed_mid_turn when the turn takes it
-      (observed 2026-10-16 macmini and 2026-11-03 athena 2.1.316). Any other "remove" reason drops it from
-      the queue undelivered, so it is no longer queued."""
+      (observed 2026-10-16 macmini and 2026-11-03 athena 2.1.316). A remove that hands it on (absorbed_*,
+      delivered_*) keeps it queued until the landing is read; any other reason (cleared_on_cancel, …)
+      drops it from the queue undelivered, so it is no longer queued.
+
+    Lines are split on \n only: Claude writes U+2028/U+2029/U+0085 unescaped inside JSON strings, and
+    str.splitlines() would cut a record there."""
     queued = False
-    for line in data.splitlines():
+    for line in data.split('\n'):
         try:
             record = json.loads(line)
         except ValueError:
@@ -144,7 +148,7 @@ def claude_receipt(data, text):
             return 'submitted'
         if record.get('type') == 'queue-operation' and same_prompt(record.get('content'), text):
             operation, reason = record.get('operation'), str(record.get('reason') or '')
-            queued = operation == 'enqueue' or (operation == 'remove' and reason.startswith('absorbed'))
+            queued = operation == 'enqueue' or (operation == 'remove' and reason.startswith(('absorbed', 'delivered')))
     return 'queued' if queued else ''
 
 
