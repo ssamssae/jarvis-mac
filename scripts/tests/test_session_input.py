@@ -231,3 +231,143 @@ class GrokVoicePrefixTest(unittest.TestCase):
                 os.close(reader)
             self.assertEqual(payload, '[VOICE] 그록 아폴로나 안녕\n')
             self.assertEqual((status, seen), ('submitted', [(history, '그록 아폴로나 안녕')]))
+
+
+class ClaudeBusyTurnTest(unittest.TestCase):
+    """T-261016-045: a prompt pasted into a busy Claude turn is reported queued, not lost.
+
+    The receipt comes only from records Claude appends to this session's JSONL after the paste."""
+
+    TEXT = '자비스 대기열 실측 문장입니다 하나 둘 셋'
+    # Recorded 2026-11-03 on athena, Claude Code 2.1.316, prompt pasted during a running Bash call.
+    # Fields trimmed to what the receipt reads; order kept.
+    ENQUEUE = {'type':'queue-operation', 'operation':'enqueue', 'timestamp':'2026-11-03T00:45:59.936Z',
+               'content':TEXT}
+    ABSORBED = {'type':'queue-operation', 'operation':'remove', 'timestamp':'2026-11-03T00:46:07.090Z',
+                'content':TEXT, 'reason':'absorbed_mid_turn'}
+    LANDING = {'type':'attachment', 'attachment':{'type':'queued_command', 'prompt':TEXT, 'commandMode':'prompt',
+                                                  'origin':{'kind':'human'}, 'humanTurn':True}}
+
+    def run_submit(self, arrivals, text=TEXT, before=()):
+        """Paste once; arrivals[i] is appended during the i-th receipt poll sleep.
+
+        monotonic() jumps 8 s per call, so the 20 s window polls at 8 s and 16 s, then one read follows."""
+        import contextlib
+        import itertools
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import jarvis_session_input as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory)/'session.jsonl'
+            transcript.write_text(''.join(json.dumps(r, ensure_ascii=False)+'\n' for r in before))
+            pasted = []
+            transport = SimpleNamespace(composer_lock=contextlib.nullcontext, capture_pane=lambda: '> ',
+                                        _paste_prompt_unlocked=pasted.append)
+            binder = SimpleNamespace(resolve=lambda: SimpleNamespace(transcript_path=transcript))
+            bridge = SimpleNamespace(Config=SimpleNamespace(from_env=lambda: SimpleNamespace()),
+                                     TmuxClaudeTransport=lambda config: transport,
+                                     SessionBinder=lambda config, repl: binder,
+                                     parse_pane_choice=lambda s: None, parse_ask_question=lambda s: None,
+                                     composer_residual_text=lambda s: '')
+            pending = list(arrivals)
+            sleeps = []
+            def sleep(seconds):
+                sleeps.append(seconds)
+                batch = pending.pop(0) if pending else []
+                with transcript.open('a') as handle:
+                    for record in batch:  # a str is written as is (a torn or foreign line)
+                        handle.write((record if isinstance(record, str) else json.dumps(record, ensure_ascii=False))+'\n')
+            req = dict(id='123', node='mac', engine='claude', origin='microphone', text=text)
+            with patch.object(adapter, 'load_bridge', return_value=bridge), \
+                 patch.object(adapter.time, 'monotonic', side_effect=itertools.count(0, 8)), \
+                 patch.object(adapter.time, 'sleep', sleep):
+                status = adapter.local_submit(Path(directory), req)
+            self.assertEqual(pasted, [text])  # pasted once, never resent
+            return status, sleeps
+
+    def test_enqueued_prompt_is_reported_queued(self):
+        status, _ = self.run_submit([[self.ENQUEUE]])
+        self.assertEqual(status, 'queued')
+
+    def test_absorbed_landing_is_reported_submitted(self):
+        status, _ = self.run_submit([[self.ENQUEUE], [self.ABSORBED, self.LANDING]])
+        self.assertEqual(status, 'submitted')
+
+    def test_landing_after_the_last_poll_is_read_once_more(self):
+        # The landing arrives during the last sleep of the window (about 19.9 s): no poll sees it,
+        # the read after the window does, and no extra wait is added after the window.
+        status, sleeps = self.run_submit([[self.ENQUEUE], [self.LANDING]])
+        self.assertEqual(status, 'submitted')
+        self.assertEqual(len(sleeps), 2)
+
+    def test_a_different_prompt_with_the_same_start_is_not_claimed(self):
+        other = self.TEXT + ' 그리고 다른 요청'
+        self.assertEqual(other[:16], self.TEXT[:16])
+        status, _ = self.run_submit([[dict(self.ENQUEUE, content=other)],
+                                     [dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt=other))]])
+        self.assertEqual(status, 'unverified')
+
+    def test_a_longer_prompt_containing_this_one_is_not_claimed(self):
+        landing = dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt='승인하지 마'))
+        status, _ = self.run_submit([[dict(self.ENQUEUE, content='승인하지 마')], [landing]], text='승인')
+        self.assertEqual(status, 'unverified')
+
+    def test_an_older_identical_queued_prompt_is_not_claimed(self):
+        # Records written before the paste are outside the tail; nothing new arrives for this paste.
+        status, _ = self.run_submit([], before=[self.ENQUEUE])
+        self.assertEqual(status, 'unverified')
+
+    def test_prompt_removed_from_the_queue_undelivered_is_not_queued(self):
+        dropped = dict(self.ABSORBED, reason='cleared_on_cancel')  # Esc empties the queue
+        status, _ = self.run_submit([[self.ENQUEUE], [dropped]])
+        self.assertEqual(status, 'unverified')
+
+    def test_handed_on_but_not_landed_stays_queued(self):
+        for reason in ('absorbed_mid_turn', 'delivered_to_agent'):
+            with self.subTest(reason=reason):
+                status, _ = self.run_submit([[self.ENQUEUE], [dict(self.ABSORBED, reason=reason)]])
+                self.assertEqual(status, 'queued')
+
+    def test_wrapped_queue_record_is_queued(self):
+        wrapped = dict(self.ENQUEUE, content='<pasted_content id="a8ec">\n' + self.TEXT + '\n</pasted_content id="a8ec">')
+        status, _ = self.run_submit([[wrapped]])
+        self.assertEqual(status, 'queued')
+
+    def test_prompt_split_over_text_blocks_is_submitted(self):
+        half = len(self.TEXT) // 2
+        record = {'type':'user', 'message':{'role':'user', 'content':[
+            {'type':'text', 'text':self.TEXT[:half]}, {'type':'text', 'text':self.TEXT[half:]}]}}
+        status, _ = self.run_submit([[record]])
+        self.assertEqual(status, 'submitted')
+
+    def test_a_torn_line_does_not_hide_the_landing(self):
+        status, _ = self.run_submit([['{"type":"user","message":{"role":', self.LANDING]])
+        self.assertEqual(status, 'submitted')
+
+    def test_line_separator_inside_the_prompt_keeps_the_record_whole(self):
+        text = '첫 줄\u2028둘째 줄\u0085셋째 줄'
+        landing = dict(self.LANDING, attachment=dict(self.LANDING['attachment'], prompt=text))
+        status, _ = self.run_submit([[landing]], text=text)
+        self.assertEqual(status, 'submitted')
+
+    def test_nested_landing_and_tool_result_are_not_the_prompt(self):
+        nested = {'type':'assistant', 'message':{'role':'assistant', 'content':[
+            {'type':'tool_use', 'name':'Write', 'input':{'example':self.LANDING, 'queue':self.ENQUEUE}}]}}
+        # A command printing exactly the dictated words (cat note.txt) is still not the prompt.
+        tool_result = {'type':'user', 'message':{'role':'user', 'content':[
+            {'type':'tool_result', 'tool_use_id':'t1', 'content':self.TEXT}]}}
+        injected = {'type':'user', 'isMeta':True, 'message':{'role':'user', 'content':self.TEXT}}
+        status, _ = self.run_submit([[nested], [tool_result, injected]])
+        self.assertEqual(status, 'unverified')
+
+    def test_wrapped_paste_and_spacing_still_match(self):
+        wrapped = {'type':'user', 'message':{'role':'user',
+                   'content':'\n\n<pasted_content id="a8ec">\n' + self.TEXT.replace(' ', '\n') + '\n</pasted_content id="a8ec">\n'}}
+        status, _ = self.run_submit([[wrapped]])
+        self.assertEqual(status, 'submitted')
+
+    def test_task_notification_landing_is_not_a_dictated_prompt(self):
+        from jarvis_session_input import claude_receipt
+        note = {'type':'attachment', 'attachment':{'type':'queued_command', 'commandMode':'task-notification',
+                                                  'prompt':'본문'}}
+        self.assertEqual(claude_receipt(json.dumps(note, ensure_ascii=False), '본문'), '')

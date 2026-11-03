@@ -47,6 +47,26 @@ def transcript_mark(path):
         return path, ''
 
 
+def queued_command_prompt(value):
+    """Prompt text of a Claude busy-turn landing (type=attachment, attachment.type=queued_command).
+
+    A prompt pasted while Claude is mid-turn reaches the transcript as this attachment, not as a
+    user record, once the turn absorbs it (T-261016-045). Task notifications share the type but
+    carry commandMode=task-notification, so they never count as a dictated prompt."""
+    attachment = value.get('attachment') if value.get('type') == 'attachment' else None
+    if not isinstance(attachment, dict) or attachment.get('type') != 'queued_command':
+        return ''
+    if attachment.get('commandMode') not in (None, 'prompt'):
+        return ''
+    prompt = attachment.get('prompt')
+    return prompt if isinstance(prompt, str) else ''
+
+
+def squash(value):
+    """Whitespace-free form of a prompt; Claude may wrap or re-space what it stores."""
+    return re.sub(r'\s+', '', value or '')
+
+
 def user_text_count(data, text):
     def contains_user(value):
         if isinstance(value, dict):
@@ -65,6 +85,71 @@ def user_text_count(data, text):
         try: count += bool(contains_user(json.loads(line)))
         except ValueError: pass
     return count
+
+
+# Claude Code 2.1.316 wraps a multi-line paste as <pasted_content id="…">…</pasted_content id="…">.
+PASTED_WRAPPER_RE = re.compile(r'\s*<pasted_content id="([^"]*)">(.*)</pasted_content(?: id="\1")?>\s*', re.S)
+
+
+def same_prompt(value, text):
+    """Whole-prompt equality, ignoring whitespace and the paste wrapper. 「승인」 is not 「승인하지 마」."""
+    if not isinstance(value, str):
+        return False
+    wrapped = PASTED_WRAPPER_RE.fullmatch(value)
+    want = squash(text)
+    return bool(want) and squash(wrapped.group(2) if wrapped else value) == want
+
+
+def claude_prompt_texts(record):
+    """Prompt texts one top-level Claude transcript record delivers to the conversation.
+
+    Only a typed or pasted user prompt and a busy-turn landing count. Tool results, hook or skill
+    injections (isMeta) and objects nested inside other records never count."""
+    if not isinstance(record, dict):
+        return []
+    landing = queued_command_prompt(record)
+    if landing:
+        return [landing]
+    message = record.get('message')
+    if record.get('type') != 'user' or record.get('isMeta') or not isinstance(message, dict):
+        return []
+    content = message.get('content')
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    blocks = [block.get('text') for block in content
+              if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)]
+    return blocks + (['\n'.join(blocks)] if len(blocks) > 1 else [])
+
+
+def claude_receipt(data, text):
+    """'submitted', 'queued' or '' for this exact prompt in Claude JSONL lines (T-261016-045).
+
+    - submitted: a user prompt record or a busy-turn landing (queued_command) carries the prompt.
+    - queued: Claude's own queue record holds it. Claude Code writes
+      {"type":"queue-operation","operation":"enqueue","content":<prompt>} the moment a prompt typed during a
+      busy turn joins its queue, then "remove" with reason absorbed_mid_turn when the turn takes it
+      (observed 2026-10-16 macmini and 2026-11-03 athena 2.1.316). A remove that hands it on (absorbed_*,
+      delivered_*) keeps it queued until the landing is read; any other reason (cleared_on_cancel, …)
+      drops it from the queue undelivered, so it is no longer queued.
+
+    Lines are split on \n only: Claude writes U+2028/U+2029/U+0085 unescaped inside JSON strings, and
+    str.splitlines() would cut a record there."""
+    queued = False
+    for line in data.split('\n'):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        if any(same_prompt(part, text) for part in claude_prompt_texts(record)):
+            return 'submitted'
+        if record.get('type') == 'queue-operation' and same_prompt(record.get('content'), text):
+            operation, reason = record.get('operation'), str(record.get('reason') or '')
+            queued = operation == 'enqueue' or (operation == 'remove' and reason.startswith(('absorbed', 'delivered')))
+    return 'queued' if queued else ''
 
 
 def user_text_seen(mark, text, source=None):
@@ -119,23 +204,30 @@ def transcript_tail_mark(path):
         return (None, 0)
 
 
-def user_text_seen_tail(mark, text):
-    """Like user_text_seen, but only reads bytes appended after the mark (Claude JSONL grows large)."""
+def transcript_tail(mark):
+    """Bytes appended after the mark, decoded; '' when the transcript cannot be read."""
     path, offset = mark
-    if path is None:
+    try:
+        with path.open('rb') as handle:
+            handle.seek(offset)
+            return handle.read().decode('utf-8', 'replace')
+    except OSError:
+        return ''
+
+
+def user_text_seen_tail(mark, text):
+    """Receipt from the bytes Claude appended after the mark (its JSONL grows large).
+
+    Returns 'submitted', 'queued' (still waiting in Claude's own queue when the window closes) or
+    'unverified'. The read after the window keeps a landing at 19.9 s from becoming "unverified"."""
+    if mark[0] is None:
         return 'unverified'
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        try:
-            with path.open('rb') as handle:
-                handle.seek(offset)
-                tail = handle.read().decode('utf-8', 'replace')
-        except OSError:
-            tail = ''
-        if user_text_count(tail, text):
+        if claude_receipt(transcript_tail(mark), text) == 'submitted':
             return 'submitted'
         time.sleep(.2)
-    return 'unverified'
+    return claude_receipt(transcript_tail(mark), text) or 'unverified'
 
 
 def local_submit(root, request, probe=False):
